@@ -1,20 +1,17 @@
 ''' 
 Step 1: LRU vs LFU cache eviction simulator. 
-This simulates a fake sequence of "agent events" (each one 
-representing the agent touching some piece of cached context), a small
-fixed-size cache, and two eviction policies to compare.
+This simulates a fake sequence of "agent events" (each one representing the agent touching some piece of cached context), a small
+fixed-size cache, and 3 eviction policies to compare.
 
 The eviction policies are:
 - LRU (Least Recently Used): Evict KV blocks that haven't been recently used.
-- LFU (Least Frequently Used): Evict KV blocks that have been least referred to (usually reference number = 0) 
+- LFU (Least Frequently Used): Evict KV blocks that have been least referred to (usually reference number = 0). 
+- Badely Algorithm: This is later incorporated as a baseline for the maximum/best possible hit rate.
 '''
-
 
 import random
 from collections import OrderedDict, defaultdict
-
 CACHE_SIZE = 5
-
 
 def generate_fake_events(num_events=200, num_items=15, seed=42):
     """
@@ -40,10 +37,10 @@ def run_lru(events, cache_size=CACHE_SIZE):
     for item in events:
         if item in cache:
             hits += 1
-            cache.move_to_end(item)  # mark as most-recently-used
+            cache.move_to_end(item) # mark as most-recently-used
         else:
             if len(cache) >= cache_size:
-                cache.popitem(last=False)  # evict least-recently-used
+                cache.popitem(last=False) # evict least-recently-used
             cache[item] = True
     return hits / len(events)
 
@@ -57,8 +54,7 @@ def run_lfu(events, cache_size=CACHE_SIZE):
         if item in cache:
             hits += 1
         else:
-            if len(cache) >= cache_size:
-                # evict the item in the cache with the lowest frequency
+            if len(cache) >= cache_size: # evict the item in the cache with the lowest frequency
                 victim = min(cache, key=lambda x: freq[x])
                 cache.remove(victim)
             cache.add(item)
@@ -71,14 +67,12 @@ Result:
  - LFU hit rate: 73.% 
  (73.5% time the information was available in the cache; 26.5% times had to be recomputed)
  
- For this simulation, frequency of reference proved a better indicator of information being reused, than recency
+For this simulation, the frequency of using cached information proved a better of context being reused, than recency.
 
-Disparity sharpens when cache size reduced -> a better eviction policy is important for smaller cache sizes.
+This disparity sharpens when cache size reduced. Thus, a better eviction policy is important for smaller cache sizes.
 '''
 
-
-''' 
-Step 2: Belady Algorithm: Decides what to evict by looking ahead into the future.
+''' Belady Algorithm: Decides what to evict by looking ahead into the future.
 - Evicts item that will be requested furthest away / never in the future.
 - Possible here because we have the full events list; a live system could not do this.
 - "Cheating" optimal policy: It sets the ceiling for the highest hit rate possible.
