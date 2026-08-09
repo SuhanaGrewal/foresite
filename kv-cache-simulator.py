@@ -64,7 +64,8 @@ def run_lfu(events, cache_size=CACHE_SIZE):
             cache.add(item)
     return hits / len(events)
 
-''' Result:
+''' 
+Result:
  - LRU hit rate: 65% 
  (65% times the information was available in the cache; 35% times had to be recomputed)
  - LFU hit rate: 73.% 
@@ -75,7 +76,9 @@ def run_lfu(events, cache_size=CACHE_SIZE):
 Disparity sharpens when cache size reduced -> a better eviction policy is important for smaller cache sizes.
 '''
 
-''' Belady Algorithm: Decides what to evict by looking ahead into the future.
+
+''' 
+Step 2: Belady Algorithm: Decides what to evict by looking ahead into the future.
 - Evicts item that will be requested furthest away / never in the future.
 - Possible here because we have the full events list; a live system could not do this.
 - "Cheating" optimal policy: It sets the ceiling for the highest hit rate possible.
@@ -84,14 +87,14 @@ Disparity sharpens when cache size reduced -> a better eviction policy is import
 def run_belady(events, cache_size=CACHE_SIZE):
     cache = set()
     hits = 0
-    for i, item in enumerate(events):
+    for i, item in enumerate(events): # i is the current item on the list
         if item in cache:
-            hits += 1
+            hits += 1 
         else:
             if len(cache) >= cache_size:
-                # for each item currently in the cache, find how far in
+                # for each item currently in the cache (i), find how far in
                 # the future (from position i+1 onward) it's next used
-                future = events[i + 1:]
+                future = events[i + 1:] 
                 next_use_distance = {}
                 for cached_item in cache:
                     if cached_item in future:
