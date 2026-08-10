@@ -12,6 +12,7 @@ Requires: OPENROUTER_API_KEY set in a .env file in this folder
 
 import json
 import os
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -45,6 +46,11 @@ def call_model_with_retry(messages, tools, max_retries=4):
     raise RuntimeError("Model call failed after multiple retries -- likely rate limited.")
 
 TRACE_LOG_PATH = "traces.jsonl"
+
+# Sub-agents dispatched by the orchestrator run in real OS threads
+# (via asyncio.to_thread), so multiple agents may call log_step at the
+# same time. This guards the shared trace file's append.
+_log_lock = threading.Lock()
 
 
 # returns pretend data
@@ -113,20 +119,17 @@ def log_step(
     agent_id: str = "main",
     parent_id: str = None,
     extra: dict = None,
+    trace_log_path: str = None,
 ):
     """
     Append one line to the trace file. Each line records:
     - step_index: which step in the loop this is
-    - event_type: 'model_call', 'tool_call', 'final_answer', etc
-    - content_snapshot: the FULL text context that was sent/used at this
-      step -- this is what we'll later check for prefix overlap
-    - timestamp: real wall-clock time, so we can measure gaps between steps
-    - agent_id: which agent produced this event (e.g. "planner",
-      "subagent_1"). Defaults to "main" for single-agent traces.
-    - parent_id: the agent_id of whoever spawned this agent. None for the
-      root/planner agent. Together with agent_id, this lets us later
-      compute graph depth (hops back to a None parent) and fan_out
-      (how many events list this agent_id as their parent).
+    - event_type: 'model_call'; 'tool_call'; 'final_answer'
+    - content_snapshot: the FULL text context that was sent/used at this step to later check for prefix overlap
+    - timestamp: real wall-clock time between each step
+    - agent_id: which agent produced this event (defaults to "main" for single-agent traces)
+    - parent_id: agent_id of whoever spawned this agent to later compute graph depth; 
+      fan_out: how many events list this agent_id as their parent
     """
     record = {
         "step_index": step_index,
@@ -140,23 +143,37 @@ def log_step(
     if extra:
         record.update(extra)
 
-    with open(TRACE_LOG_PATH, "a") as f:
-        f.write(json.dumps(record) + "\n")
+    path = trace_log_path or TRACE_LOG_PATH
+    with _log_lock:
+        with open(path, "a") as f:
+            f.write(json.dumps(record) + "\n")
 
 
 # agent loop
 
-def run_agent(user_task: str, max_steps: int = 6):
-    messages = [{"role": "user", "content": user_task}]
+def run_agent(
+    user_task: str,
+    max_steps: int = 6,
+    agent_id: str = "main",
+    parent_id: str = None,
+    trace_log_path: str = None,
+    upstream_context: str = None,
+):
+    """Run the tool-calling loop for one agent and return its final answer text
+    (or None if it hits max_steps without producing one).
+
+    agent_id/parent_id/trace_log_path let this same loop be reused for
+    sub-agents spawned by the orchestrator, not just the single top-level
+    "main" agent. upstream_context, if given, is prepended to the task so a
+    sub-agent can see the results of the sub-tasks it depends on.
+    """
+    task_text = f"{upstream_context}\n\nNow: {user_task}" if upstream_context else user_task
+    messages = [{"role": "user", "content": task_text}]
     step = 0
 
     while step < max_steps:
-        # snapshot exactly what we're about to send -- this full messages
-        # history is the "context" that a real KV cache would need to
-        # process. Logging it lets us later check how much of it repeats
-        # from one step to the next.
         context_snapshot = json.dumps(messages)
-        log_step(step, "model_call", context_snapshot)
+        log_step(step, "model_call", context_snapshot, agent_id=agent_id, parent_id=parent_id, trace_log_path=trace_log_path)
 
         response = call_model_with_retry(messages, TOOLS)
 
@@ -165,9 +182,9 @@ def run_agent(user_task: str, max_steps: int = 6):
 
         if not tool_calls:
             final_text = choice.message.content or ""
-            log_step(step, "final_answer", final_text)
-            print(f"\nFinal answer:\n{final_text}")
-            return
+            log_step(step, "final_answer", final_text, agent_id=agent_id, parent_id=parent_id, trace_log_path=trace_log_path)
+            print(f"\n[{agent_id}] Final answer:\n{final_text}")
+            return final_text
 
         # add the model's response (including its tool request) to history
         messages.append(choice.message.model_dump())
@@ -179,6 +196,9 @@ def run_agent(user_task: str, max_steps: int = 6):
                 step,
                 "tool_call",
                 json.dumps(tool_input),
+                agent_id=agent_id,
+                parent_id=parent_id,
+                trace_log_path=trace_log_path,
                 extra={"tool_name": tc.function.name},
             )
             result = run_tool(tc.function.name, tool_input)
@@ -192,7 +212,8 @@ def run_agent(user_task: str, max_steps: int = 6):
 
         step += 1
 
-    print("Hit max_steps without a final answer.")
+    print(f"[{agent_id}] Hit max_steps without a final answer.")
+    return None
 
 
 BATCH_TASKS = [
