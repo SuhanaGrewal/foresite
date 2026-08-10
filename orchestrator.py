@@ -2,14 +2,15 @@
 Phase A: multi-agent orchestrator for Foresite.
 
 This module adds a planner that decomposes a user task into a dependency
-graph of sub-tasks. Later pieces (sub-agent dispatch, synthesis) build on
-top of this file. For now this only covers planning, so it can be tested
-and confirmed in isolation before anything else depends on it.
+graph of sub-tasks, and a scheduler that dispatches those sub-tasks as real
+concurrent agents. The synthesis step that combines their results is added
+separately on top of this.
 """
 
+import asyncio
 import json
 
-from trace_agent import client, MODEL, call_model_with_retry
+from trace_agent import call_model_with_retry, log_step, run_agent
 
 
 PLANNER_SYSTEM_PROMPT = """You are a planning agent. Given a user task, break it into a small \
@@ -102,7 +103,77 @@ def plan_task(user_task: str) -> list[dict]:
     return subtasks
 
 
+# --- sub-agent dispatch -----------------------------------------------
+
+def _format_upstream_context(dep_results: dict) -> str:
+    """Turn {sub_task_id: result_text} into a plain-text block a downstream
+    sub-agent's prompt can read."""
+    lines = ["Results from prerequisite sub-tasks:"]
+    for dep_id, text in dep_results.items():
+        lines.append(f"- {dep_id}: {text}")
+    return "\n".join(lines)
+
+
+async def _run_subtask(subtask: dict, tasks_by_id: dict, planner_id: str, trace_log_path: str):
+    """Wait for this sub-task's dependencies (if any), then run it.
+
+    tasks_by_id maps sub-task id -> its asyncio.Task. Sub-tasks with no
+    dependency in common never await each other, so the event loop is free
+    to run them at the same time.
+    """
+    dep_ids = subtask.get("depends_on", [])
+    dep_results = {}
+    if dep_ids:
+        results = await asyncio.gather(*(tasks_by_id[d] for d in dep_ids))
+        dep_results = dict(zip(dep_ids, results))
+
+    agent_id = f"subagent_{subtask['id']}"
+    upstream_context = _format_upstream_context(dep_results) if dep_results else None
+
+    # parent_id always points at the planner (keeps depth = 1 hop from
+    # planner); the real fan-in/fan-out graph is preserved here via
+    # depends_on, logged once per sub-agent.
+    log_step(
+        0,
+        "spawn",
+        json.dumps({"depends_on": dep_ids}),
+        agent_id=agent_id,
+        parent_id=planner_id,
+        trace_log_path=trace_log_path,
+        extra={"depends_on": dep_ids},
+    )
+
+    # run_agent's OpenAI call is blocking (sync), so route it through a real
+    # OS thread -- otherwise independent sub-agents would just take turns on
+    # the single asyncio event loop thread instead of truly overlapping.
+    result_text = await asyncio.to_thread(
+        run_agent,
+        subtask["description"],
+        agent_id=agent_id,
+        parent_id=planner_id,
+        trace_log_path=trace_log_path,
+        upstream_context=upstream_context,
+    )
+    return result_text
+
+
+async def dispatch_subtasks(subtasks: list[dict], planner_id: str = "planner", trace_log_path: str = None) -> dict:
+    """Run every sub-task, respecting depends_on, and return
+    {sub_task_id: result_text} once everything has completed."""
+    tasks_by_id = {}
+    for st in subtasks:
+        tasks_by_id[st["id"]] = asyncio.create_task(
+            _run_subtask(st, tasks_by_id, planner_id, trace_log_path)
+        )
+    results = await asyncio.gather(*tasks_by_id.values())
+    return dict(zip(tasks_by_id.keys(), results))
+
+
 if __name__ == "__main__":
     task = "Compare the weather in Delhi, Los Angeles, and Tokyo right now, and recommend which city is best for outdoor sightseeing today."
     plan = plan_task(task)
     print(json.dumps(plan, indent=2))
+
+    results = asyncio.run(dispatch_subtasks(plan, trace_log_path="traces/run_orchestrator_test.jsonl"))
+    print("\n=== sub-task results ===")
+    print(json.dumps(results, indent=2))

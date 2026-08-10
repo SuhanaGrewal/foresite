@@ -1,8 +1,12 @@
 """
-Converts the real traces (run_N.jsonl file) into a flat event sequence (a list
-of "item touches*"), which is the format both the cache simulator and feature-extraction code need.
+Trace to Events Converter
 
-*item touches: an ordered list showing which piece of content the agent accessed at a specific point.
+Turns a real trace file (traces/run_N.jsonl) into a flat, ordered list of
+"item touches", the format both the cache simulator and the
+feature-extraction code expect.
+
+- item touch: an entry marking a point when the agent accessed a piece of content
+- the full sequence, read in order, shows what got accessed and when
 """
 
 import hashlib
@@ -12,15 +16,20 @@ import sys
 
 def item_id(content: str) -> str:
     """
-    Turn a piece of text into a short ID; 2 identical pieces of text produce the same ID to achieve prefix overlap.
+    - hashes text into a short, stable ID
+    - identical text always hashes to the same ID
+    - this is how the simulator recognizes reused content, not new content
     """
     return hashlib.md5(content.encode()).hexdigest()[:10]
 
 
 def trace_to_events(trace_path: str) -> list:
     """
-    - Read trace file and produce a flat, ordered list of item IDs; 1 entry per distinct piece of content touched.
-    - model_call steps: break apart growing message history into individual messages; repeated messages show up as repeated IDs.
+    - reads a trace file, returns an ordered list of item IDs
+    - one entry per content chunk touched
+    - model_call steps carry the full, growing message history, so each
+      one gets broken into individual messages
+    - if an individual message reappears later it gets the same ID both times
     """
     events = []
 
@@ -40,7 +49,7 @@ def trace_to_events(trace_path: str) -> list:
                     events.append(item_id(msg_text))
 
             else:
-                # tool_call / final_answer -- treat as one item each
+                # tool_call / final_answer, treat as one item each
                 events.append(item_id(record["content_snapshot"]))
 
     return events
