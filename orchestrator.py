@@ -1,10 +1,9 @@
 """
-Phase A: multi-agent orchestrator for Foresite.
+Orchestrator
 
-This module adds a planner that decomposes a user task into a dependency
-graph of sub-tasks, and a scheduler that dispatches those sub-tasks as real
-concurrent agents. The synthesis step that combines their results is added
-separately on top of this.
+A planning agent breaks a task into a dependency graph of
+sub-tasks (DAG); a scheduler runs them as real concurrent agents; and a
+synthesizer combines their results into one final answer.
 """
 
 import asyncio
@@ -18,11 +17,11 @@ number of independent sub-tasks that can be handed off to separate worker agents
 
 Rules:
 - Each sub-task must be small enough for one worker agent to complete on its own \
-(e.g. "get the weather for Tokyo", not "plan my whole trip").
+(ex: "get the weather for Tokyo", not "plan my whole trip").
 - If two sub-tasks don't need each other's output, they must NOT depend on each other, \
 so they can run in parallel.
 - Only add a dependency when a sub-task genuinely needs another sub-task's result as input \
-(e.g. a "compare and recommend" step needs the individual lookups to finish first).
+(ex:. a "compare and recommend" step needs the individual lookups to finish first).
 - Give every sub-task a short, unique, lowercase snake_case id.
 
 Respond with ONLY a JSON object, no prose, no markdown code fences, matching exactly this shape:
@@ -36,11 +35,14 @@ Respond with ONLY a JSON object, no prose, no markdown code fences, matching exa
 
 
 def _strip_code_fence(text: str) -> str:
-    """Models sometimes wrap JSON in ```json ... ``` even when told not to."""
+    """
+    - models sometimes wrap JSON in code fences even when told not to
+    - strips those fences off before parsing
+    """
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
-        lines = lines[1:]  # drop opening fence (with optional language tag)
+        lines = lines[1:]
         if lines and lines[-1].strip().startswith("```"):
             lines = lines[:-1]
         text = "\n".join(lines)
@@ -48,8 +50,12 @@ def _strip_code_fence(text: str) -> str:
 
 
 def _validate_plan(subtasks: list[dict]) -> None:
-    """Basic sanity checks so a malformed plan fails loudly instead of breaking
-    the scheduler later with a confusing KeyError or infinite wait."""
+    """
+    - checks the plan isn't empty
+    - checks every sub-task id is unique
+    - checks every depends_on entry points at a real, different sub-task
+    - checks for dependency cycles via topological sort (kahn's algorithm)
+    """
     if not subtasks:
         raise ValueError("Plan has zero sub-tasks.")
 
@@ -67,7 +73,6 @@ def _validate_plan(subtasks: list[dict]) -> None:
             if dep == st["id"]:
                 raise ValueError(f"Sub-task '{st['id']}' depends on itself")
 
-    # cycle check via topological sort (Kahn's algorithm)
     remaining = {st["id"]: set(st.get("depends_on", [])) for st in subtasks}
     resolved = set()
     while remaining:
@@ -80,8 +85,10 @@ def _validate_plan(subtasks: list[dict]) -> None:
 
 
 def plan_task(user_task: str) -> list[dict]:
-    """Ask the planner model to decompose user_task into a list of sub-task
-    dicts: {"id": str, "description": str, "depends_on": [str, ...]}."""
+    """
+    - asks the planner model to break user_task into sub-tasks
+    - returns a list of dicts: id, description, depends_on
+    """
     messages = [
         {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
         {"role": "user", "content": user_task},
@@ -103,11 +110,13 @@ def plan_task(user_task: str) -> list[dict]:
     return subtasks
 
 
-# --- sub-agent dispatch -----------------------------------------------
+# sub-agent dispatch
 
 def _format_upstream_context(dep_results: dict) -> str:
-    """Turn {sub_task_id: result_text} into a plain-text block a downstream
-    sub-agent's prompt can read."""
+    """
+    - turns {sub_task_id: result_text} into a plain-text block
+    - a downstream sub-agent's prompt reads this to see its prerequisites' results
+    """
     lines = ["Results from prerequisite sub-tasks:"]
     for dep_id, text in dep_results.items():
         lines.append(f"- {dep_id}: {text}")
@@ -115,11 +124,17 @@ def _format_upstream_context(dep_results: dict) -> str:
 
 
 async def _run_subtask(subtask: dict, tasks_by_id: dict, planner_id: str, trace_log_path: str):
-    """Wait for this sub-task's dependencies (if any), then run it.
-
-    tasks_by_id maps sub-task id -> its asyncio.Task. Sub-tasks with no
-    dependency in common never await each other, so the event loop is free
-    to run them at the same time.
+    """
+    - waits for this sub-task's dependencies, if any, before starting
+    - tasks_by_id maps sub-task id to its asyncio task
+    - sub-tasks with no dependency in common never await each other, so
+      the event loop is free to run them at the same time
+    - parent_id always points at the planner, keeping depth a simple
+      one-hop calculation; the real fan-in/fan-out graph is preserved
+      separately via depends_on, logged once per sub-agent
+    - run_agent's API call is blocking, so it's routed through a real OS
+      thread via asyncio.to_thread; otherwise independent sub-agents
+      would just take turns instead of truly overlapping
     """
     dep_ids = subtask.get("depends_on", [])
     dep_results = {}
@@ -130,9 +145,6 @@ async def _run_subtask(subtask: dict, tasks_by_id: dict, planner_id: str, trace_
     agent_id = f"subagent_{subtask['id']}"
     upstream_context = _format_upstream_context(dep_results) if dep_results else None
 
-    # parent_id always points at the planner (keeps depth = 1 hop from
-    # planner); the real fan-in/fan-out graph is preserved here via
-    # depends_on, logged once per sub-agent.
     log_step(
         0,
         "spawn",
@@ -143,9 +155,6 @@ async def _run_subtask(subtask: dict, tasks_by_id: dict, planner_id: str, trace_
         extra={"depends_on": dep_ids},
     )
 
-    # run_agent's OpenAI call is blocking (sync), so route it through a real
-    # OS thread -- otherwise independent sub-agents would just take turns on
-    # the single asyncio event loop thread instead of truly overlapping.
     result_text = await asyncio.to_thread(
         run_agent,
         subtask["description"],
@@ -158,8 +167,10 @@ async def _run_subtask(subtask: dict, tasks_by_id: dict, planner_id: str, trace_
 
 
 async def dispatch_subtasks(subtasks: list[dict], planner_id: str = "planner", trace_log_path: str = None) -> dict:
-    """Run every sub-task, respecting depends_on, and return
-    {sub_task_id: result_text} once everything has completed."""
+    """
+    - runs every sub-task, respecting depends_on
+    - returns {sub_task_id: result_text} once everything has completed
+    """
     tasks_by_id = {}
     for st in subtasks:
         tasks_by_id[st["id"]] = asyncio.create_task(
@@ -169,7 +180,7 @@ async def dispatch_subtasks(subtasks: list[dict], planner_id: str = "planner", t
     return dict(zip(tasks_by_id.keys(), results))
 
 
-# --- synthesis -----------------------------------------------------------
+# synthesis
 
 SYNTHESIS_SYSTEM_PROMPT = (
     "You are a synthesis agent. You are given the original user task and the "
@@ -181,9 +192,11 @@ SYNTHESIS_SYSTEM_PROMPT = (
 
 
 def _sink_subtask_ids(subtasks: list[dict]) -> list[str]:
-    """Sub-tasks that nothing else in the plan depends on -- the terminal
-    outputs of the DAG. These are what synthesis actually needs to see,
-    regardless of how many dependency layers came before them."""
+    """
+    - finds sub-tasks that nothing else in the plan depends on
+    - these are the DAG's terminal outputs, what synthesis actually needs
+      to see, regardless of how many dependency layers came before them
+    """
     depended_on = set()
     for st in subtasks:
         depended_on.update(st.get("depends_on", []))
@@ -197,8 +210,10 @@ def synthesize(
     planner_id: str = "planner",
     trace_log_path: str = None,
 ) -> str:
-    """Run one final agent that combines every sink sub-task's result into
-    the answer to the original user task."""
+    """
+    - runs one final agent that combines every sink sub-task's result
+    - produces the answer to the original user task
+    """
     sink_ids = _sink_subtask_ids(subtasks)
     sink_results = {sid: results[sid] for sid in sink_ids}
 
@@ -232,7 +247,9 @@ def synthesize(
 
 
 async def orchestrate(user_task: str, trace_log_path: str = None) -> str:
-    """Full Phase A pipeline: plan -> concurrent dispatch -> synthesis."""
+    """
+    - full Phase A pipeline: plan, then concurrent dispatch, then synthesis
+    """
     plan = plan_task(user_task)
     results = await dispatch_subtasks(plan, trace_log_path=trace_log_path)
     return synthesize(user_task, plan, results, trace_log_path=trace_log_path)

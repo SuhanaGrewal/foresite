@@ -1,0 +1,129 @@
+''' 
+Step 1: LRU vs LFU cache eviction simulator.
+
+This simulates a fake sequence of "agent events" (each one representing the agent touching some piece of cached context), a small
+fixed-size cache, and 3 eviction policies to compare.
+
+The eviction policies are:
+- LRU (Least Recently Used): Evict KV blocks that haven't been recently used.
+- LFU (Least Frequently Used): Evict KV blocks that have been least referred to (usually reference number = 0). 
+- Badely Algorithm: This is later incorporated as a baseline for the maximum/best possible hit rate.
+'''
+
+import random
+from collections import OrderedDict, defaultdict
+CACHE_SIZE = 5
+
+def generate_fake_events(num_events=200, num_items=15, seed=42):
+    """
+    Make up a sequence of item IDs, like an agent repeatedly touching
+    the same pieces of context. 
+    
+    Some items are:
+    - Hot: reused a lot; simulating an agent looping (e.g.: agent completing a goal will keep returning
+    to the cache and appending it with new iterations via kv blocks).
+    - Cold: used once; simulating a finished task (e.g.: agent returns the capital of a country after being asked once). 
+    """
+    random.seed(seed)
+    items = [f"item_{i}" for i in range(num_items)]
+    # give some items much higher probability of being picked (hot items)
+    weights = [random.choice([1, 1, 1, 5, 10]) for _ in items]
+    events = random.choices(items, weights=weights, k=num_events)
+    return events
+
+
+def run_lru(events, cache_size=CACHE_SIZE):
+    cache = OrderedDict()  # keeps insertion/access order
+    hits = 0
+    for item in events:
+        if item in cache:
+            hits += 1
+            cache.move_to_end(item) # mark as most-recently-used
+        else:
+            if len(cache) >= cache_size:
+                cache.popitem(last=False) # evict least-recently-used
+            cache[item] = True
+    return hits / len(events)
+
+
+def run_lfu(events, cache_size=CACHE_SIZE):
+    cache = set()
+    freq = defaultdict(int)
+    hits = 0
+    for item in events:
+        freq[item] += 1
+        if item in cache:
+            hits += 1
+        else:
+            if len(cache) >= cache_size: # evict the item in the cache with the lowest frequency
+                victim = min(cache, key=lambda x: freq[x])
+                cache.remove(victim)
+            cache.add(item)
+    return hits / len(events)
+
+''' 
+Result:
+ - LRU hit rate: 65% 
+ (65% times the information was available in the cache; 35% times had to be recomputed)
+ - LFU hit rate: 73.% 
+ (73.5% time the information was available in the cache; 26.5% times had to be recomputed)
+ 
+For this simulation, the frequency of using cached information proved a better of context being reused, than recency.
+
+This disparity sharpens when cache size reduced. Thus, a better eviction policy is important for smaller cache sizes.
+'''
+
+<<<<<<< HEAD:kv-cache-simulator.py
+
+''' 
+Step 2: Belady Algorithm: Decides what to evict by looking ahead into the future.
+- Evicts item that will be requested furthest away / never in the future.
+- Possible here because we have the full events list; a live system could not do this.
+- "Cheating" optimal policy: It sets the ceiling for the highest hit rate possible.
+=======
+''' 
+Belady Algorithm: Decides what to evict by looking ahead into the future.
+
+It's key features are:
+- Evicts items that will be requested furthest away/never again in the future.
+- Can be used for simulations (such as here) where we have the full list of events to occur; a real live system can not do this as future
+events cannot be predicted.
+- It is the "cheating" optimal policy, so it sets the ceiling for the highest hit rate possible.
+>>>>>>> 0a8223c2c034c383359c2975ec28e63c9d41ba7e:kv-cache-simulator-v1.py
+'''
+
+def run_belady(events, cache_size=CACHE_SIZE):
+    cache = set()
+    hits = 0
+    for i, item in enumerate(events): # i is the current item on the list
+        if item in cache:
+            hits += 1 
+        else:
+            if len(cache) >= cache_size:
+                # for each item currently in the cache (i), find how far in
+                # the future (from position i+1 onward) it's next used
+                future = events[i + 1:] 
+                next_use_distance = {}
+                for cached_item in cache:
+                    if cached_item in future:
+                        next_use_distance[cached_item] = future.index(cached_item)
+                    else:
+                        next_use_distance[cached_item] = float("inf")  # never used again
+                victim = max(cache, key=lambda x: next_use_distance[x])
+                cache.remove(victim)
+            cache.add(item)
+    return hits / len(events)
+ 
+ 
+if __name__ == "__main__":
+    events = generate_fake_events()
+ 
+    lru_hit_rate = run_lru(events)
+    lfu_hit_rate = run_lfu(events)
+    belady_hit_rate = run_belady(events)
+ 
+    print(f"Total events simulated: {len(events)}")
+    print(f"Cache size: {CACHE_SIZE} slots")
+    print(f"LRU hit rate: {lru_hit_rate:.1%}")
+    print(f"LFU hit rate: {lfu_hit_rate:.1%}")
+    print(f"Belady's (optimal) hit rate: {belady_hit_rate:.1%}")
