@@ -219,26 +219,3 @@ def run_agent(
 
     print(f"[{agent_id}] Hit max_steps without a final answer.")
     return None
-
-
-BATCH_TASKS = [
-    "Compare the weather in Delhi, Los Angeles, and Tokyo right now, and recommend which city is best for outdoor sightseeing today.",
-    "Check trail conditions and weather for both Runyon Canyon and Griffith Park, then tell me which is the better hike this afternoon.",
-    "I'm deciding between a beach day and a hiking day this weekend. Check the weather for both Santa Monica and Runyon Canyon and recommend one.",
-    "Plan a 2-day trip: check the weather for Saturday and Sunday, search for one indoor and one outdoor activity, and write a short itinerary.",
-    "Compare hiking conditions across Runyon Canyon, Griffith Park, and Topanga State Park, and rank them best to worst for today.",
-]
-
-if __name__ == "__main__":
-    os.makedirs("traces", exist_ok=True)
-
-    for i, task in enumerate(BATCH_TASKS, start=1):
-        TRACE_LOG_PATH = f"traces/run_{i}.jsonl"
-        if os.path.exists(TRACE_LOG_PATH):
-            os.remove(TRACE_LOG_PATH)
-
-        print(f"\n=== Running task {i}/{len(BATCH_TASKS)}: {task}")
-        run_agent(task)
-        print(f"Trace written to {TRACE_LOG_PATH}")
-        if i < len(BATCH_TASKS):
-            time.sleep(10)  # brief pause between tasks to respect rate limits

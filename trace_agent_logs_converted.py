@@ -48,6 +48,13 @@ def trace_to_events(trace_path: str) -> list:
                     msg_text = json.dumps(msg, sort_keys=True)
                     events.append(item_id(msg_text))
 
+            elif event_type == "spawn":
+                # spawn events carry orchestrator bookkeeping (depends_on),
+                # not real content a model ever processes, so they aren't
+                # a genuine cache "touch". Skipped here; still read directly
+                # from the trace file later for graph-feature extraction.
+                continue
+
             else:
                 # tool_call / final_answer, treat as one item each
                 events.append(item_id(record["content_snapshot"]))
