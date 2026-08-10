@@ -1,10 +1,11 @@
 """
-Step 3: A minimal toy agent that calls a model through OpenRouter, uses a
-couple of fake tools, and logs every step to a trace file.
+Trace Agent
 
-This is intentionally simple -- the point isn't a "good" agent, it's a
-REAL log of agent behavior we can later feed into the cache simulator
-instead of made-up random data.
+Runs a minimal agent through OpenRouter (Model = Google Gemma 4), using fake tools,
+and logs every step to a trace file.
+
+- intentionally simple; not meant to be a "good" agent
+- produces real log of agent behavior, fed into the cache simulator
 
 Requires: pip install openai python-dotenv
 Requires: OPENROUTER_API_KEY set in a .env file in this folder
@@ -26,11 +27,13 @@ client = OpenAI(
     api_key=os.environ.get("OPENROUTER_API_KEY"),
 )
 
-MODEL = "gemma-4-26b-a4b-it:free"
+MODEL = "google/gemma-4-26b-a4b-it:free"
 
 
 def call_model_with_retry(messages, tools, max_retries=4):
-    """Retry the API call with backoff if rate limited or response is empty."""
+    """
+    - retries the API call with backoff if rate limited or response is empty
+    """
     for attempt in range(max_retries):
         response = client.chat.completions.create(
             model=MODEL,
@@ -43,13 +46,14 @@ def call_model_with_retry(messages, tools, max_retries=4):
         wait_seconds = 5 * (attempt + 1)
         print(f"  [rate limited or empty response, retrying in {wait_seconds}s...]")
         time.sleep(wait_seconds)
-    raise RuntimeError("Model call failed after multiple retries -- likely rate limited.")
+    raise RuntimeError("Model call failed after multiple retries, likely rate limited.")
+
 
 TRACE_LOG_PATH = "traces.jsonl"
 
-# Sub-agents dispatched by the orchestrator run in real OS threads
+# sub-agents dispatched by the orchestrator run in real OS threads
 # (via asyncio.to_thread), so multiple agents may call log_step at the
-# same time. This guards the shared trace file's append.
+# same time. this guards the shared trace file's append.
 _log_lock = threading.Lock()
 
 
@@ -122,14 +126,13 @@ def log_step(
     trace_log_path: str = None,
 ):
     """
-    Append one line to the trace file. Each line records:
+    appends one line to the trace file, recording:
     - step_index: which step in the loop this is
-    - event_type: 'model_call'; 'tool_call'; 'final_answer'
-    - content_snapshot: the FULL text context that was sent/used at this step to later check for prefix overlap
-    - timestamp: real wall-clock time between each step
-    - agent_id: which agent produced this event (defaults to "main" for single-agent traces)
-    - parent_id: agent_id of whoever spawned this agent to later compute graph depth; 
-      fan_out: how many events list this agent_id as their parent
+    - event_type: model_call, tool_call, or final_answer
+    - content_snapshot: the full text context sent/used at this step, used later to check prefix overlap
+    - timestamp: real wall clock time between each step
+    - agent_id: which agent produced this event, defaults to "main" for single-agent traces
+    - parent_id: agent_id of whoever spawned this agent, used later to compute graph depth and fan_out
     """
     record = {
         "step_index": step_index,
@@ -159,13 +162,15 @@ def run_agent(
     trace_log_path: str = None,
     upstream_context: str = None,
 ):
-    """Run the tool-calling loop for one agent and return its final answer text
-    (or None if it hits max_steps without producing one).
+    """
+    runs the tool-calling loop for one agent, returns its final answer text
+    (or None if it hits max_steps without producing one)
 
-    agent_id/parent_id/trace_log_path let this same loop be reused for
-    sub-agents spawned by the orchestrator, not just the single top-level
-    "main" agent. upstream_context, if given, is prepended to the task so a
-    sub-agent can see the results of the sub-tasks it depends on.
+    - agent_id, parent_id, trace_log_path let this loop be reused for
+      sub-agents spawned by the orchestrator, not just the single
+      top-level "main" agent
+    - upstream_context, if given, is prepended to the task so a sub-agent
+      can see the results of the sub-tasks it depends on
     """
     task_text = f"{upstream_context}\n\nNow: {user_task}" if upstream_context else user_task
     messages = [{"role": "user", "content": task_text}]
