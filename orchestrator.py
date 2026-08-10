@@ -169,11 +169,77 @@ async def dispatch_subtasks(subtasks: list[dict], planner_id: str = "planner", t
     return dict(zip(tasks_by_id.keys(), results))
 
 
-if __name__ == "__main__":
-    task = "Compare the weather in Delhi, Los Angeles, and Tokyo right now, and recommend which city is best for outdoor sightseeing today."
-    plan = plan_task(task)
-    print(json.dumps(plan, indent=2))
+# --- synthesis -----------------------------------------------------------
 
-    results = asyncio.run(dispatch_subtasks(plan, trace_log_path="traces/run_orchestrator_test.jsonl"))
-    print("\n=== sub-task results ===")
-    print(json.dumps(results, indent=2))
+SYNTHESIS_SYSTEM_PROMPT = (
+    "You are a synthesis agent. You are given the original user task and the "
+    "results of the sub-tasks that were run to address it. Combine them into "
+    "a single, direct final answer to the original task. Integrate the "
+    "sub-task results into one coherent answer rather than repeating them "
+    "verbatim."
+)
+
+
+def _sink_subtask_ids(subtasks: list[dict]) -> list[str]:
+    """Sub-tasks that nothing else in the plan depends on -- the terminal
+    outputs of the DAG. These are what synthesis actually needs to see,
+    regardless of how many dependency layers came before them."""
+    depended_on = set()
+    for st in subtasks:
+        depended_on.update(st.get("depends_on", []))
+    return [st["id"] for st in subtasks if st["id"] not in depended_on]
+
+
+def synthesize(
+    user_task: str,
+    subtasks: list[dict],
+    results: dict,
+    planner_id: str = "planner",
+    trace_log_path: str = None,
+) -> str:
+    """Run one final agent that combines every sink sub-task's result into
+    the answer to the original user task."""
+    sink_ids = _sink_subtask_ids(subtasks)
+    sink_results = {sid: results[sid] for sid in sink_ids}
+
+    synthesis_prompt = (
+        f"Original task: {user_task}\n\n"
+        "Sub-task results:\n"
+        + "\n".join(f"- {sid}: {text}" for sid, text in sink_results.items())
+    )
+
+    log_step(
+        0,
+        "spawn",
+        json.dumps({"depends_on": sink_ids}),
+        agent_id="synthesizer",
+        parent_id=planner_id,
+        trace_log_path=trace_log_path,
+        extra={"depends_on": sink_ids},
+    )
+    log_step(0, "model_call", synthesis_prompt, agent_id="synthesizer", parent_id=planner_id, trace_log_path=trace_log_path)
+
+    messages = [
+        {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},
+        {"role": "user", "content": synthesis_prompt},
+    ]
+    response = call_model_with_retry(messages, tools=None)
+    final_text = response.choices[0].message.content or ""
+
+    log_step(0, "final_answer", final_text, agent_id="synthesizer", parent_id=planner_id, trace_log_path=trace_log_path)
+    print(f"\n[synthesizer] Final answer:\n{final_text}")
+    return final_text
+
+
+async def orchestrate(user_task: str, trace_log_path: str = None) -> str:
+    """Full Phase A pipeline: plan -> concurrent dispatch -> synthesis."""
+    plan = plan_task(user_task)
+    results = await dispatch_subtasks(plan, trace_log_path=trace_log_path)
+    return synthesize(user_task, plan, results, trace_log_path=trace_log_path)
+
+
+if __name__ == "__main__":
+    task = "Check trail conditions and weather for both Runyon Canyon and Griffith Park, then tell me which is the better hike this afternoon."
+    final_answer = asyncio.run(orchestrate(task, trace_log_path="traces/run_orchestrator_test.jsonl"))
+    print("\n=== FINAL ANSWER ===")
+    print(final_answer)
