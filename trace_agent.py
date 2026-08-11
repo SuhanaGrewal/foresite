@@ -1,8 +1,11 @@
 """
 Trace Agent
 
-Runs a minimal agent through a local Ollama server (Model = Qwen2.5-1.5B-Instruct),
-using fake tools, and logs every step to a trace file.
+Runs a minimal agent through a local Ollama server (Model = Qwen2.5-1.5B-Instruct)
+with four tools -- get_weather (real, Open-Meteo), web_search (real Wikipedia
+text for FRAMES-driven runs, fake trail-search string otherwise), execute_python
+(real sandboxed code execution), query_database (real SQLite product catalog,
+constrained lookup interface) -- and logs every step to a trace file.
 
 - intentionally simple; not meant to be a "good" agent
 - produces real log of agent behavior, fed into the cache simulator
@@ -27,6 +30,11 @@ from datetime import datetime, timezone
 
 import ollama
 import requests
+
+from catalog_db import get_product_by_id, init_db, list_categories, search_products
+from code_sandbox import execute_python
+
+init_db()
 
 MODEL = "qwen2.5:1.5b"
 
@@ -211,6 +219,38 @@ def real_search_tool(query: str) -> str:
     return f"Wikipedia: {best_doc['title']} ({best_doc['url']})\n{snippet}"
 
 
+def execute_python_tool(code: str) -> str:
+    result = execute_python(code)
+    if result["timed_out"]:
+        return "Execution timed out."
+    return f"stdout:\n{result['stdout']}\nstderr:\n{result['stderr']}\nreturn code: {result['returncode']}"
+
+
+def query_database_tool(
+    query_type: str,
+    search_term: str = None,
+    category: str = None,
+    max_price: float = None,
+    product_id: int = None,
+    in_stock_only: bool = False,
+) -> str:
+    """
+    constrained lookup interface over catalog.db -- the model picks a
+    query_type and typed arguments, never raw SQL
+    """
+    if query_type == "search":
+        results = search_products(
+            search_term=search_term, category=category, max_price=max_price, in_stock_only=in_stock_only
+        )
+        return json.dumps(results) if results else "No matching products found."
+    if query_type == "get_by_id":
+        product = get_product_by_id(product_id) if product_id is not None else None
+        return json.dumps(product) if product else "Product not found."
+    if query_type == "list_categories":
+        return json.dumps(list_categories())
+    return "Unknown query_type. Use 'search', 'get_by_id', or 'list_categories'."
+
+
 TOOLS = [
     {
         "type": "function",
@@ -236,19 +276,69 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_python",
+            "description": (
+                "Execute a short Python snippet in a sandbox (no network access, no filesystem "
+                "writes outside a scratch directory, 5-second timeout) and return its stdout/stderr. "
+                "Use for calculations, data processing, or quick logic checks."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"code": {"type": "string"}},
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_database",
+            "description": (
+                "Query a local outdoor-gear product catalog (backpacks, footwear, tents, sleeping "
+                "bags, trekking poles). query_type is one of: 'search' (filter by search_term/"
+                "category/max_price/in_stock_only), 'get_by_id' (needs product_id), or "
+                "'list_categories' (no other args)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query_type": {"type": "string", "enum": ["search", "get_by_id", "list_categories"]},
+                    "search_term": {"type": "string"},
+                    "category": {"type": "string"},
+                    "max_price": {"type": "number"},
+                    "product_id": {"type": "integer"},
+                    "in_stock_only": {"type": "boolean"},
+                },
+                "required": ["query_type"],
+            },
+        },
+    },
 ]
 
 
 def run_tool(name: str, tool_input: dict) -> str:
-    if name == "get_weather":
-        if USE_REAL_WEATHER:
-            return real_weather_tool(tool_input["city"])
-        return fake_weather_tool(tool_input["city"])
-    if name == "web_search":
-        if USE_REAL_SEARCH:
-            return real_search_tool(tool_input["query"])
-        return fake_search_tool(tool_input["query"])
-    return "Unknown tool"
+    # small local models sometimes emit tool calls with missing/malformed
+    # arguments -- reporting that back to the model as a normal tool result
+    # (so it can retry) is far better than crashing the whole agent loop
+    try:
+        if name == "get_weather":
+            if USE_REAL_WEATHER:
+                return real_weather_tool(tool_input["city"])
+            return fake_weather_tool(tool_input["city"])
+        if name == "web_search":
+            if USE_REAL_SEARCH:
+                return real_search_tool(tool_input["query"])
+            return fake_search_tool(tool_input["query"])
+        if name == "execute_python":
+            return execute_python_tool(tool_input["code"])
+        if name == "query_database":
+            return query_database_tool(**tool_input)
+        return "Unknown tool"
+    except (TypeError, KeyError) as e:
+        return f"Tool call error: {name} was called with invalid arguments ({e}). Check the tool's required parameters and try again."
 
 
 # logging piece

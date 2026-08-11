@@ -15,6 +15,17 @@ from trace_agent import cache_metrics, call_model_with_retry, log_step, run_agen
 PLANNER_SYSTEM_PROMPT = """You are a planning agent. Given a user task, break it into a small \
 number of independent sub-tasks that can be handed off to separate worker agents.
 
+Each worker agent has access to these four tools -- plan sub-tasks that a worker can \
+actually complete with them, and pick whichever tools genuinely fit the task rather than \
+defaulting to the same one or two every time:
+- get_weather(city): real current conditions for a real city.
+- web_search(query): real web/reference lookup for facts, trivia, or general information.
+- execute_python(code): runs a short Python snippet (calculations, data processing, logic \
+checks) and returns its output.
+- query_database(query_type, ...): looks up products in a local outdoor-gear catalog \
+(backpacks, footwear, tents, sleeping bags, trekking poles) -- search by name/category/price, \
+fetch by id, or list categories.
+
 Rules:
 - Each sub-task must be small enough for one worker agent to complete on its own \
 (ex: "get the weather for Tokyo", not "plan my whole trip").
