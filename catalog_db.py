@@ -1,12 +1,14 @@
 """
 Catalog Database
-
+ 
 A small local SQLite database (an outdoor-gear product catalog, fitting
 the project's existing hiking/trail-themed tasks) that the agent queries
-through a constrained, parameterized interface -- not raw SQL. The model
-never sees or writes SQL; it can only call query_database with a small,
-typed set of arguments, which the functions below turn into parameterized
-queries (every value is bound via `?`, never string-interpolated).
+through a constrained, parameterized interface, not raw SQL.
+ 
+- the model never sees or writes SQL
+- it can only call query_database with a small, typed set of arguments
+- those arguments are turned into parameterized queries below, every
+  value bound via `?`, never string-interpolated
 """
 
 import sqlite3
