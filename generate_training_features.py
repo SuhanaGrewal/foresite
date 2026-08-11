@@ -1,14 +1,15 @@
 """
 Generate Fake Features
-
+ 
 Synthesizes a CSV with the exact schema feature_extraction.py produces,
 so train_predictor.py can be built and exercised end-to-end before real
-trace data is ready. This is NOT a data model of anything -- it exists
-purely to prove the training pipeline runs correctly. Swap in a real
-features.csv later; train_predictor.py's code does not change, only
-which file is passed via --input.
-
-Writes to features_fake.csv (never touches the real features.csv).
+trace data is ready.
+ 
+- this is NOT a data model of anything, it exists purely to prove the
+  training pipeline runs correctly
+- swap in a real features.csv later; train_predictor.py's code does not
+  change, only which file is passed via --input
+- writes to features_fake.csv, never touches the real features.csv
 """
 
 import numpy as np
