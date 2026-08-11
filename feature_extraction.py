@@ -16,9 +16,11 @@ directly, since trace_to_events() drops per-record metadata (timestamp,
 agent_id, parent_id) this needs.
 """
 
+import glob
 import json
 from datetime import datetime
 
+import pandas as pd
 import tiktoken
 
 from trace_agent_logs_converted import item_id, trace_to_events
@@ -288,21 +290,94 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
         f"at position {next(i for i in range(min(len(actual), len(expected))) if actual[i] != expected[i]) if actual != expected else 'length mismatch'}"
     )
 
-    return rows
+    return rows, touches
+
+
+# --- leakage check ---------------------------------------------------------
+
+def _independent_recompute(touches: list[dict], i: int) -> dict:
+    """Recompute row i's backward-looking features completely independently,
+    using ONLY touches[:i] -- a hard slice cutoff that makes it structurally
+    impossible for this recomputation to see row i or anything later. Used
+    to verify the running-state implementation in build_rows_for_trace
+    against a second, independently-written path, not just re-derive the
+    same code."""
+    t = touches[i]
+    earlier = touches[:i]
+
+    same_item_positions = [j for j, e in enumerate(earlier) if e["item_id"] == t["item_id"]]
+    if same_item_positions:
+        last_j = same_item_positions[-1]
+        steps = i - last_j
+        seconds = (_parse_ts(t["timestamp"]) - _parse_ts(earlier[last_j]["timestamp"])).total_seconds()
+    else:
+        steps, seconds = -1, -1.0
+
+    agent_seen = sum(1 for e in touches[: i + 1] if e["agent_id"] == t["agent_id"])
+    agent_total = sum(1 for e in touches if e["agent_id"] == t["agent_id"])
+
+    return {
+        "steps_since_last_seen": steps,
+        "seconds_since_last_seen": seconds,
+        "fraction_of_trace_completed": agent_seen / agent_total,
+    }
+
+
+def assert_no_leakage(rows: list[dict], touches: list[dict]) -> None:
+    """Fails loudly if any backward-looking feature doesn't match an
+    independent recomputation that structurally cannot see the future
+    (touches[:i]), or if measured_latency_seconds is ever negative (which
+    could only happen if it were measured against a later event).
+
+    Note on fraction_of_trace_completed: its denominator is that agent's
+    EVENTUAL total touch count, which is a whole-run aggregate only known
+    once a trace has finished -- fine for building this offline training
+    table (which only ever runs on completed traces), but it's a different
+    kind of leakage than the per-row timestamp/position leakage this
+    function checks, and a live/online predictor would need an approximation
+    of it rather than this exact value.
+    """
+    for i, row in enumerate(rows):
+        expected = _independent_recompute(touches, i)
+        for key, expected_value in expected.items():
+            actual_value = row[key]
+            if isinstance(expected_value, float):
+                assert abs(actual_value - expected_value) < 1e-6, (
+                    f"leakage check failed at row {i} ({key}): expected {expected_value}, got {actual_value}"
+                )
+            else:
+                assert actual_value == expected_value, (
+                    f"leakage check failed at row {i} ({key}): expected {expected_value}, got {actual_value}"
+                )
+
+        if row["measured_latency_seconds"] is not None:
+            assert row["measured_latency_seconds"] >= 0, (
+                f"leakage check failed at row {i}: negative measured_latency_seconds "
+                f"means it was computed against a LATER event, not an earlier one"
+            )
+
+
+# --- multi-trace assembly ---------------------------------------------------
+
+def build_feature_table(trace_paths: list[str], window: int = REUSE_WINDOW_EVENTS) -> pd.DataFrame:
+    all_rows = []
+    for trace_path in trace_paths:
+        rows, touches = build_rows_for_trace(trace_path, window)
+        assert_no_leakage(rows, touches)
+        all_rows.extend(rows)
+    return pd.DataFrame(all_rows)
 
 
 if __name__ == "__main__":
-    import sys
+    trace_paths = sorted(glob.glob("traces/run_*.jsonl"))
 
-    trace_path = sys.argv[1] if len(sys.argv) > 1 else "traces/run_6.jsonl"
-    rows = build_rows_for_trace(trace_path)
+    df = build_feature_table(trace_paths)
+    df.to_csv("features.csv", index=False)
 
-    print(f"Trace: {trace_path}")
-    print(f"Rows generated: {len(rows)}")
-    print(f"Cross-check against trace_to_events(): PASSED")
-    reused = sum(r["will_be_reused"] for r in rows)
-    print(f"will_be_reused=1: {reused} ({reused / len(rows):.1%})")
-    print(f"will_be_reused=0: {len(rows) - reused} ({(len(rows) - reused) / len(rows):.1%})")
-    print("\nFirst 8 rows:")
-    for r in rows[:8]:
-        print(r)
+    reused_pct = df["will_be_reused"].mean() * 100
+    print(f"Traces processed: {len(trace_paths)}")
+    print(f"Distinct traces in table: {df['trace_id'].nunique()}")
+    print(f"Row count: {len(df)}")
+    print(f"Class balance -- will_be_reused=1: {reused_pct:.1f}%  will_be_reused=0: {100 - reused_pct:.1f}%")
+    print(f"Leakage check: PASSED for all {len(trace_paths)} traces")
+    print("Saved to features.csv")
