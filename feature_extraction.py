@@ -34,9 +34,10 @@ per-task-type averages using only traces OTHER than the one being
 featurized.
 
 dag_completion_fraction (completed_subtasks / total_subtasks_in_plan) is
-unaffected by this limitation, since the DAG's total sub-task count is
-known upfront from the plan itself, not from this trace's actual future
-execution -- it just isn't built in this file yet.
+unaffected by this limitation and IS built: the DAG's total sub-task
+count is known upfront from the plan itself, not from this trace's
+actual future execution, so it needs no future value and no historical
+average to compute.
 """
 
 import glob
@@ -78,12 +79,13 @@ def _load_records(trace_path: str) -> list[dict]:
     return records
 
 
-def _annotate_records(records: list[dict]) -> list[dict]:
-    """Compute the record-level fields we derive ourselves: token_count and
-    measured_latency_seconds. Both are computed once per record and reused
-    across every touch exploded out of that record -- same scope as the
-    already-logged content_length_chars, since all of these describe "how
-    big/slow was the context at this step", not any one message's own size.
+def _annotate_records(records: list[dict], depends_on_map: dict) -> list[dict]:
+    """Compute the record-level fields we derive ourselves: token_count,
+    measured_latency_seconds, and dag_completion_fraction. All three are
+    computed once per record and reused across every touch exploded out of
+    that record -- same scope as the already-logged content_length_chars,
+    since all of these describe "how big/slow/far-along was the run at this
+    step", not any one message's own size.
 
     measured_latency_seconds is backward-looking: the gap between this
     model_call and this SAME agent_id's previous logged record (any event
@@ -92,13 +94,31 @@ def _annotate_records(records: list[dict]) -> list[dict]:
     since nothing meaningful precedes it, and None for non-model_call
     records. A forward-looking (next-event) definition was ruled out because
     it would read future information into a feature.
+
+    dag_completion_fraction = completed_subtasks / total_subtasks_in_plan,
+    using only sub-agents that have already produced a final_answer in a
+    STRICTLY EARLIER record than this one (this record's own final_answer,
+    if it is one, does not count toward its own fraction -- same "never let
+    a row see its own event" rule as everything else in this file).
+    total_subtasks_in_plan excludes the synthesizer, since it's not part of
+    the planner's own DAG. Legacy single-agent traces have no DAG at all
+    (total_subtasks_in_plan == 0), so this is None there, not a divide by
+    zero.
     """
+    plan_subtask_ids = {agent for agent in depends_on_map if agent != "synthesizer"}
+    total_subtasks = len(plan_subtask_ids)
+    completed_subtasks: set[str] = set()
+
     last_ts_by_agent: dict[str, str] = {}
     for record in records:
         if record["event_type"] == "spawn":
             continue
 
         record["token_count"] = len(_ENCODING.encode(record["content_snapshot"]))
+
+        record["dag_completion_fraction"] = (
+            len(completed_subtasks) / total_subtasks if total_subtasks > 0 else None
+        )
 
         agent = record["agent_id"]
         if record["event_type"] == "model_call" and agent in last_ts_by_agent:
@@ -109,6 +129,11 @@ def _annotate_records(records: list[dict]) -> list[dict]:
             record["measured_latency_seconds"] = None
 
         last_ts_by_agent[agent] = record["timestamp"]
+
+        # mark completion AFTER computing this record's own fraction above,
+        # so it only affects records that come after it
+        if record["event_type"] == "final_answer" and agent in plan_subtask_ids:
+            completed_subtasks.add(agent)
 
     return records
 
@@ -142,6 +167,7 @@ def _explode_touches(records: list[dict]) -> list[dict]:
                     "content_length_chars": record["content_length_chars"],
                     "token_count": record["token_count"],
                     "measured_latency_seconds": record["measured_latency_seconds"],
+                    "dag_completion_fraction": record["dag_completion_fraction"],
                 }
             )
     return touches
@@ -240,7 +266,7 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
     parent_map, depends_on_map = _build_graph_maps(records)
     fan_out_map, dependency_of_sink = _compute_fan_out_and_sink_deps(depends_on_map)
 
-    records = _annotate_records(records)
+    records = _annotate_records(records, depends_on_map)
     touches = _explode_touches(records)
     labels = _compute_labels(touches, window)
 
@@ -291,6 +317,7 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
             "steps_since_last_seen": steps_since_last_seen,
             "seconds_since_last_seen": seconds_since_last_seen,
             "measured_latency_seconds": t["measured_latency_seconds"],
+            "dag_completion_fraction": t["dag_completion_fraction"],
             "agent_depth": _compute_agent_depth(agent, parent_map),
             "fan_out": fan_out_map.get(raw_agent, 0),
             "is_dependency_of_sink": raw_agent in dependency_of_sink,
@@ -314,12 +341,12 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
         f"at position {next(i for i in range(min(len(actual), len(expected))) if actual[i] != expected[i]) if actual != expected else 'length mismatch'}"
     )
 
-    return rows, touches
+    return rows, touches, depends_on_map
 
 
 # --- leakage check ---------------------------------------------------------
 
-def _independent_recompute(touches: list[dict], i: int) -> dict:
+def _independent_recompute(touches: list[dict], i: int, depends_on_map: dict) -> dict:
     """Recompute row i's backward-looking features completely independently,
     using ONLY touches[:i] -- a hard slice cutoff that makes it structurally
     impossible for this recomputation to see row i or anything later. Used
@@ -337,23 +364,40 @@ def _independent_recompute(touches: list[dict], i: int) -> dict:
     else:
         steps, seconds = -1, -1.0
 
+    plan_subtask_ids = {agent for agent in depends_on_map if agent != "synthesizer"}
+    total_subtasks = len(plan_subtask_ids)
+    if total_subtasks > 0:
+        completed = {
+            e["agent_id"]
+            for e in earlier
+            if e["event_type"] == "final_answer" and e["agent_id"] in plan_subtask_ids
+        }
+        dag_completion_fraction = len(completed) / total_subtasks
+    else:
+        dag_completion_fraction = None
+
     return {
         "steps_since_last_seen": steps,
         "seconds_since_last_seen": seconds,
+        "dag_completion_fraction": dag_completion_fraction,
     }
 
 
-def assert_no_leakage(rows: list[dict], touches: list[dict]) -> None:
+def assert_no_leakage(rows: list[dict], touches: list[dict], depends_on_map: dict) -> None:
     """Fails loudly if any backward-looking feature doesn't match an
     independent recomputation that structurally cannot see the future
     (touches[:i]), or if measured_latency_seconds is ever negative (which
     could only happen if it were measured against a later event).
     """
     for i, row in enumerate(rows):
-        expected = _independent_recompute(touches, i)
+        expected = _independent_recompute(touches, i, depends_on_map)
         for key, expected_value in expected.items():
             actual_value = row[key]
-            if isinstance(expected_value, float):
+            if expected_value is None:
+                assert actual_value is None, (
+                    f"leakage check failed at row {i} ({key}): expected None, got {actual_value}"
+                )
+            elif isinstance(expected_value, float):
                 assert abs(actual_value - expected_value) < 1e-6, (
                     f"leakage check failed at row {i} ({key}): expected {expected_value}, got {actual_value}"
                 )
@@ -374,8 +418,8 @@ def assert_no_leakage(rows: list[dict], touches: list[dict]) -> None:
 def build_feature_table(trace_paths: list[str], window: int = REUSE_WINDOW_EVENTS) -> pd.DataFrame:
     all_rows = []
     for trace_path in trace_paths:
-        rows, touches = build_rows_for_trace(trace_path, window)
-        assert_no_leakage(rows, touches)
+        rows, touches, depends_on_map = build_rows_for_trace(trace_path, window)
+        assert_no_leakage(rows, touches, depends_on_map)
         all_rows.extend(rows)
     return pd.DataFrame(all_rows)
 
