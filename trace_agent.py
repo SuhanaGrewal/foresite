@@ -20,6 +20,7 @@ Requires: `ollama serve` running locally, and `ollama pull qwen2.5:1.5b`
 
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -156,6 +157,60 @@ def real_weather_tool(city: str) -> str:
     )
 
 
+# real_search_tool: grounded in a FRAMES question's gold Wikipedia articles.
+#
+# a real "web_search" implementation needs a search index or a paid search
+# API; what's built here instead is FRAMES-shaped: run_frames_batch.py
+# pre-fetches one FRAMES question's real gold Wikipedia articles (via
+# frames_data.py) and activates them here, then this tool returns whichever
+# gold article best lexically overlaps the model's query. this is a
+# deliberately simplified stand-in for real retrieval -- no embeddings, no
+# distractor documents, no forced minimum tool-call counts, unlike
+# IntentKV's full FRAMES adaptation (which built those specifically to
+# stress-test a cache-pruning algorithm we aren't testing here).
+#
+# tasks with no active FRAMES corpus (e.g. the hiking/trail tasks in
+# run_batch.py, which have no free real backing data source) fall back to
+# fake_search_tool rather than returning nothing.
+_active_search_corpus = None
+
+
+def set_search_corpus(corpus: list[dict]) -> None:
+    global _active_search_corpus
+    _active_search_corpus = corpus
+
+
+def clear_search_corpus() -> None:
+    global _active_search_corpus
+    _active_search_corpus = None
+
+
+_STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "of", "in", "on", "for", "to",
+    "and", "or", "what", "who", "which", "that", "this", "its", "did", "do", "does",
+}
+
+
+def _tokenize(text: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in _STOPWORDS and len(w) > 2}
+
+
+def real_search_tool(query: str) -> str:
+    if not _active_search_corpus:
+        return fake_search_tool(query)
+
+    query_tokens = _tokenize(query)
+    scored = [
+        (len(query_tokens & _tokenize(doc["title"] + " " + doc["text"][:500])), doc)
+        for doc in _active_search_corpus
+    ]
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    best_doc = scored[0][1]
+
+    snippet = best_doc["text"][:1200]
+    return f"Wikipedia: {best_doc['title']} ({best_doc['url']})\n{snippet}"
+
+
 TOOLS = [
     {
         "type": "function",
@@ -173,7 +228,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web for trail/location info",
+            "description": "Search the web for information relevant to the query",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -190,6 +245,8 @@ def run_tool(name: str, tool_input: dict) -> str:
             return real_weather_tool(tool_input["city"])
         return fake_weather_tool(tool_input["city"])
     if name == "web_search":
+        if USE_REAL_SEARCH:
+            return real_search_tool(tool_input["query"])
         return fake_search_tool(tool_input["query"])
     return "Unknown tool"
 

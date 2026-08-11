@@ -4,3 +4,4 @@ venv/
 .env
 features_fake.csv
 model.joblib
+wiki_cache/
