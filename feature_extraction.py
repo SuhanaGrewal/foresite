@@ -133,11 +133,88 @@ def _compute_labels(touches: list[dict], window: int = REUSE_WINDOW_EVENTS) -> l
     return labels
 
 
+def _strip_agent_prefix(agent_id: str) -> str:
+    """depends_on lists use raw sub-task ids (e.g. "weather_tokyo"), but
+    sub-agents' own agent_id carries a "subagent_" prefix. Strip it so the
+    two vocabularies can be compared directly."""
+    prefix = "subagent_"
+    return agent_id[len(prefix):] if agent_id.startswith(prefix) else agent_id
+
+
+def _build_graph_maps(records: list[dict]) -> tuple[dict, dict]:
+    """From the RAW records (spawn events included -- these are read
+    directly per the requirement, not through the item-touch pipeline):
+    - parent_map: agent_id -> parent_id (same for every record of that agent)
+    - depends_on_map: agent_id -> raw dependency ids, from that agent's own
+      spawn record only (legacy single-agent traces have none)
+    """
+    parent_map: dict[str, str] = {}
+    depends_on_map: dict[str, list] = {}
+    for record in records:
+        agent = record["agent_id"]
+        if agent not in parent_map:
+            parent_map[agent] = record.get("parent_id")
+        if record["event_type"] == "spawn":
+            depends_on_map[agent] = record.get("depends_on", [])
+    return parent_map, depends_on_map
+
+
+def _compute_agent_depth(agent_id: str, parent_map: dict) -> int:
+    """Hops back to a root, walking parent_id generically rather than
+    hardcoding the string "planner" -- the planner's own decomposition call
+    is never itself logged as a row today, so any parent_id that isn't
+    itself a logged agent_id is treated as one implicit hop to an external
+    root. This gives depth 0 to legacy "main" traces (parent_id=None) and
+    depth 1 to today's sub-agents/synthesizer (parent_id="planner",
+    unresolvable), while still supporting real multi-level chains if the
+    schema ever grows one."""
+    depth = 0
+    current = agent_id
+    seen = set()
+    while True:
+        parent = parent_map.get(current)
+        if parent is None:
+            return depth
+        if parent in seen or parent not in parent_map:
+            return depth + 1
+        seen.add(current)
+        depth += 1
+        current = parent
+
+
+def _compute_fan_out_and_sink_deps(depends_on_map: dict) -> tuple[dict, set]:
+    """
+    fan_out[raw_id] = how many other agents' depends_on lists name raw_id.
+    sink ids = the synthesizer's own depends_on -- literally the DAG's
+    terminal sub-tasks, whatever the plan's shape.
+    dependency_of_sink = union of the sink agents' own depends_on lists, so
+    "is this row a prerequisite of something that feeds the final answer".
+    """
+    fan_out: dict[str, int] = {}
+    for deps in depends_on_map.values():
+        for d in deps:
+            fan_out[d] = fan_out.get(d, 0) + 1
+
+    sink_ids = set(depends_on_map.get("synthesizer", []))
+    dependency_of_sink = set()
+    for agent, deps in depends_on_map.items():
+        if _strip_agent_prefix(agent) in sink_ids:
+            dependency_of_sink.update(deps)
+
+    return fan_out, dependency_of_sink
+
+
 _EVENT_TYPES = ("model_call", "tool_call", "final_answer")
 
 
 def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> list[dict]:
     records = _load_records(trace_path)
+
+    # graph structure comes from the raw records directly, spawn events
+    # included, before those get filtered out of the item-touch pipeline
+    parent_map, depends_on_map = _build_graph_maps(records)
+    fan_out_map, dependency_of_sink = _compute_fan_out_and_sink_deps(depends_on_map)
+
     records = _annotate_records(records)
     touches = _explode_touches(records)
     labels = _compute_labels(touches, window)
@@ -172,6 +249,8 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
         # this agent's own progress through its own run, not the whole trace
         fraction_of_trace_completed = agent_seen_so_far[agent] / agent_touch_counts[agent]
 
+        raw_agent = _strip_agent_prefix(agent)
+
         row = {
             "trace_id": trace_id,
             "row_index": i,
@@ -186,6 +265,9 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
             "seconds_since_last_seen": seconds_since_last_seen,
             "fraction_of_trace_completed": fraction_of_trace_completed,
             "measured_latency_seconds": t["measured_latency_seconds"],
+            "agent_depth": _compute_agent_depth(agent, parent_map),
+            "fan_out": fan_out_map.get(raw_agent, 0),
+            "is_dependency_of_sink": raw_agent in dependency_of_sink,
             "will_be_reused": labels[i],
         }
         for et in _EVENT_TYPES:
