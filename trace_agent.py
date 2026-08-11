@@ -19,13 +19,20 @@ Requires: `ollama serve` running locally, and `ollama pull qwen2.5:1.5b`
 """
 
 import json
+import os
 import threading
 import time
 from datetime import datetime, timezone
 
 import ollama
+import requests
 
 MODEL = "qwen2.5:1.5b"
+
+# set to "false" to fall back to the old hardcoded fake tool outputs, for
+# quick offline/API-cost-free iteration (see fake_weather_tool/fake_search_tool)
+USE_REAL_WEATHER = os.environ.get("USE_REAL_WEATHER", "true").lower() != "false"
+USE_REAL_SEARCH = os.environ.get("USE_REAL_SEARCH", "true").lower() != "false"
 
 
 def call_model_with_retry(messages, tools, max_retries=4):
@@ -94,6 +101,61 @@ def fake_search_tool(query: str) -> str:
     return f"Top result for '{query}': Trail is open, moderate difficulty, dogs allowed."
 
 
+# WMO weather interpretation codes, per Open-Meteo's published code table
+# (https://open-meteo.com/en/docs) -- decoding a real API's numeric response
+# into text, not fabricated data.
+_WMO_CODES = {
+    0: "clear sky", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
+    45: "fog", 48: "depositing rime fog",
+    51: "light drizzle", 53: "moderate drizzle", 55: "dense drizzle",
+    56: "light freezing drizzle", 57: "dense freezing drizzle",
+    61: "slight rain", 63: "moderate rain", 65: "heavy rain",
+    66: "light freezing rain", 67: "heavy freezing rain",
+    71: "slight snow fall", 73: "moderate snow fall", 75: "heavy snow fall", 77: "snow grains",
+    80: "slight rain showers", 81: "moderate rain showers", 82: "violent rain showers",
+    85: "slight snow showers", 86: "heavy snow showers",
+    95: "thunderstorm", 96: "thunderstorm with slight hail", 99: "thunderstorm with heavy hail",
+}
+
+
+def real_weather_tool(city: str) -> str:
+    """
+    real current conditions via Open-Meteo (free, no API key):
+    geocode the city name to lat/lon, then fetch current weather for that point
+    """
+    try:
+        geo = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": city, "count": 1},
+            timeout=10,
+        ).json()
+        results = geo.get("results")
+        if not results:
+            return f"Weather in {city}: city not found."
+
+        place = results[0]
+        forecast = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": place["latitude"],
+                "longitude": place["longitude"],
+                "current": "temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m",
+            },
+            timeout=10,
+        ).json()
+        current = forecast["current"]
+    except (requests.RequestException, KeyError) as e:
+        return f"Weather in {city}: lookup failed ({e})."
+
+    condition = _WMO_CODES.get(current["weather_code"], f"weather code {current['weather_code']}")
+    return (
+        f"Weather in {place['name']}, {place.get('country', '')}: "
+        f"{current['temperature_2m']}C, {condition}, "
+        f"{current['relative_humidity_2m']}% humidity, "
+        f"wind {current['wind_speed_10m']} km/h"
+    )
+
+
 TOOLS = [
     {
         "type": "function",
@@ -124,6 +186,8 @@ TOOLS = [
 
 def run_tool(name: str, tool_input: dict) -> str:
     if name == "get_weather":
+        if USE_REAL_WEATHER:
+            return real_weather_tool(tool_input["city"])
         return fake_weather_tool(tool_input["city"])
     if name == "web_search":
         return fake_search_tool(tool_input["query"])
