@@ -5,3 +5,4 @@ venv/
 features_fake.csv
 model.joblib
 wiki_cache/
+catalog.db
