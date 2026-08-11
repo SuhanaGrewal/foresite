@@ -1,34 +1,35 @@
 """
 Train Predictor
-
+ 
 Trains a cache-reuse predictor from a features CSV produced by
 feature_extraction.py (schema: trace_id, row_index, item_id, agent_id,
 parent_id, event_type, timestamp, ... will_be_reused, event_type_*).
-
+ 
 *** PIPELINE CORRECTNESS CHECK, NOT A REAL RESULT ***
-As of this writing there are only a handful of real traces (well under 50
-rows total), and the default run uses entirely synthetic data from
-generate_fake_features.py. AUC-ROC / PR-AUC numbers printed by this script
-are not statistically meaningful at this sample size and must not be quoted
-as a real evaluation of the model. Re-run against a larger, real
-features.csv before drawing any conclusions.
-
+- as of this writing there are only a handful of real traces (well under
+  50 rows total), and the default run uses entirely synthetic data from
+  generate_fake_features.py
+- AUC-ROC / PR-AUC numbers printed by this script are not statistically
+  meaningful at this sample size and must not be quoted as a real
+  evaluation of the model
+- re-run against a larger, real features.csv before drawing any conclusions
+ 
 Two models are trained:
-  - logistic regression: baseline, coefficients printed for inspection
-  - XGBoost: primary model
-
-The train/test split is done at the TRACE level (never row level), since
+- logistic regression: baseline, coefficients printed for inspection
+- XGBoost: primary model
+ 
+The train/test split is done at the TRACE level, never row level, since
 rows within one trace are correlated -- a row-level split would leak
 information from a trace's other rows into the test set.
-
-TODO(more data): once there are enough traces to do a meaningful
-GroupKFold split (group = trace_id), add k-fold cross-validation here.
-Skipped for now because with a handful of traces, folds would be tiny and
-their variance would be uninterpretable.
-
-TODO(more data): once there are enough predicted-probability buckets with
-enough rows each, add a calibration reliability check (e.g. a reliability
-diagram / Brier score by bucket). Skipped for now for the same reason.
+ 
+TODO(more data):
+- once there are enough traces to do a meaningful GroupKFold split
+  (group = trace_id), add k-fold cross-validation here. Skipped for now
+  because with a handful of traces, folds would be tiny and their
+  variance would be uninterpretable.
+- once there are enough predicted-probability buckets with enough rows
+  each, add a calibration reliability check (e.g. a reliability diagram
+  / Brier score by bucket). Skipped for now for the same reason.
 """
 
 import argparse
@@ -52,14 +53,9 @@ except ImportError:
 RANDOM_SEED = 42
 TARGET_COLUMN = "will_be_reused"
 ID_COLUMNS = ["item_id", "timestamp", "agent_id", "parent_id"]
-# event_type is dropped too: it's already one-hot encoded as
-# event_type_model_call / event_type_tool_call / event_type_final_answer,
-# and as a raw string it isn't a usable model input.
+
 NON_FEATURE_COLUMNS = ID_COLUMNS + ["event_type"]
-# -1 is the same "not applicable / no prior value" sentinel steps_since_last_seen
-# and seconds_since_last_seen already use, so missing measured_latency_seconds
-# (agent's first record) and dag_completion_fraction (legacy traces with no DAG)
-# reuse that convention instead of introducing a second missing-value scheme.
+
 MISSING_VALUE_SENTINEL = -1
 
 
