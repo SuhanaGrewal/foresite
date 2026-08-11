@@ -4,20 +4,28 @@ Run Batch
 Runs every task in BATCH_TASKS through the full orchestrator pipeline
 (plan, concurrent dispatch, synthesis), saving each one to its own trace
 file in traces/.
+
+Tasks are deliberately spread across unrelated domains -- geography/weather,
+history/science trivia, finance/math, general retail lookup, and multi-tool
+combinations of those -- rather than one recurring theme, so the resulting
+traces (and any features later extracted from them) reflect varied agent
+behavior instead of one narrow, repetitive task shape.
 """
 
 import asyncio
 import os
-import time
 
 from orchestrator import orchestrate
 
 BATCH_TASKS = [
-    "Compare the weather in Delhi, Los Angeles, and Tokyo right now, and recommend which city is best for outdoor sightseeing today.",
-    "Check trail conditions and weather for both Runyon Canyon and Griffith Park, then tell me which is the better hike this afternoon.",
-    "I'm deciding between a beach day and a hiking day this weekend. Check the weather for both Santa Monica and Runyon Canyon and recommend one.",
-    "Plan a 2-day trip to Los Angeles: check the weather for Saturday and Sunday, search for one indoor and one outdoor activity, and write a short itinerary.",
-    "Compare hiking conditions across Runyon Canyon, Griffith Park, and Topanga State Park, and rank them best to worst for today.",
+    "Compare the current weather in Reykjavik, Nairobi, and Singapore, and recommend which city has the most comfortable conditions for outdoor sightseeing today.",
+    "Search for when the first successful human heart transplant took place, then calculate how many years ago that was from 2026.",
+    "Find an in-stock pair of wireless headphones under $100 in the product catalog, and calculate the total price including 8.5% sales tax.",
+    "Search for the boiling point of water at sea level in Celsius, then calculate what that is in Fahrenheit.",
+    "List the product categories available in the catalog, then find the highest-rated item in the kitchenware category.",
+    "Check the current weather in Tokyo. If it's raining, search the product catalog for an indoor-friendly item to recommend instead of going outside.",
+    "Search for the history and impact of the printing press, then summarize it in two sentences.",
+    "Calculate the compound interest on $2,000 invested at 5% annually for 8 years, compounded monthly.",
 ]
 
 
@@ -32,9 +40,6 @@ async def run_batch():
         print(f"\n=== Running task {i}/{len(BATCH_TASKS)}: {task}")
         await orchestrate(task, trace_log_path=trace_path)
         print(f"Trace written to {trace_path}")
-
-        if i < len(BATCH_TASKS):
-            time.sleep(10)  # brief pause between tasks to respect rate limits
 
 
 if __name__ == "__main__":

@@ -3,9 +3,11 @@ Trace Agent
 
 Runs a minimal agent through a local Ollama server (Model = Qwen2.5-1.5B-Instruct)
 with four tools -- get_weather (real, Open-Meteo), web_search (real Wikipedia
-text for FRAMES-driven runs, fake trail-search string otherwise), execute_python
-(real sandboxed code execution), query_database (real SQLite product catalog,
-constrained lookup interface) -- and logs every step to a trace file.
+text: a FRAMES question's gold documents when one is active, otherwise a live
+general Wikipedia search -- real either way, no silent fake-data shortcut),
+execute_python (real sandboxed code execution), query_database (real SQLite
+product catalog, constrained lookup interface) -- and logs every step to a
+trace file.
 
 - intentionally simple; not meant to be a "good" agent
 - produces real log of agent behavior, fed into the cache simulator
@@ -33,6 +35,7 @@ import requests
 
 from catalog_db import get_product_by_id, init_db, list_categories, search_products
 from code_sandbox import execute_python
+from frames_data import wikipedia_search
 
 init_db()
 
@@ -94,20 +97,20 @@ _log_lock = threading.Lock()
 def fake_weather_tool(city: str) -> str:
     fake_data = {
         "delhi": "38C, hazy, hot and dry",
-        "los angeles": "22C, sunny, light breeze",
         "tokyo": "27C, humid, partly cloudy",
-        "santa monica": "20C, sunny, ocean breeze",
-        "runyon canyon": "24C, sunny, dry",
-        "griffith park": "23C, sunny, mild breeze",
-        "topanga state park": "21C, sunny, cool morning",
         "london": "16C, overcast, light rain",
+        "nairobi": "24C, sunny, mild breeze",
+        "sao paulo": "26C, scattered showers",
+        "reykjavik": "9C, windy, overcast",
+        "cairo": "34C, clear, dry",
+        "toronto": "18C, partly cloudy",
     }
     key = city.strip().lower()
     return f"Weather in {city}: {fake_data.get(key, '22C, sunny, light breeze')}"
 
 
 def fake_search_tool(query: str) -> str:
-    return f"Top result for '{query}': Trail is open, moderate difficulty, dogs allowed."
+    return f"[offline placeholder result for '{query}': no real data source connected in fake mode]"
 
 
 # WMO weather interpretation codes, per Open-Meteo's published code table
@@ -165,21 +168,25 @@ def real_weather_tool(city: str) -> str:
     )
 
 
-# real_search_tool: grounded in a FRAMES question's gold Wikipedia articles.
+# real_search_tool: real Wikipedia content either way, never a silent fake
+# fallback in real mode.
 #
-# a real "web_search" implementation needs a search index or a paid search
-# API; what's built here instead is FRAMES-shaped: run_frames_batch.py
-# pre-fetches one FRAMES question's real gold Wikipedia articles (via
-# frames_data.py) and activates them here, then this tool returns whichever
-# gold article best lexically overlaps the model's query. this is a
-# deliberately simplified stand-in for real retrieval -- no embeddings, no
-# distractor documents, no forced minimum tool-call counts, unlike
-# IntentKV's full FRAMES adaptation (which built those specifically to
-# stress-test a cache-pruning algorithm we aren't testing here).
-#
-# tasks with no active FRAMES corpus (e.g. the hiking/trail tasks in
-# run_batch.py, which have no free real backing data source) fall back to
-# fake_search_tool rather than returning nothing.
+# a full "web_search" implementation needs a search index or a paid search
+# API; what's built here instead is Wikipedia-shaped, in two modes:
+#   1. FRAMES mode: run_frames_batch.py pre-fetches one FRAMES question's
+#      real gold Wikipedia articles (via frames_data.py) and activates them
+#      here; this tool returns whichever gold article best lexically
+#      overlaps the model's query. deliberately simplified vs. IntentKV's
+#      full FRAMES adaptation -- no embeddings, no distractor documents, no
+#      forced minimum tool-call counts (those exist there to stress-test a
+#      cache-pruning algorithm we aren't testing here).
+#   2. general mode (no FRAMES corpus active, e.g. any task in
+#      run_batch.py): a live general Wikipedia search for the query
+#      (frames_data.wikipedia_search) -- real and topic-agnostic, so
+#      diverse non-FRAMES tasks get real search grounding too, not a
+#      hardcoded placeholder string.
+# fake_search_tool is only used when USE_REAL_SEARCH=false, the explicit
+# offline/API-cost-free dev flag -- never a silent substitute in real mode.
 _active_search_corpus = None
 
 
@@ -204,19 +211,24 @@ def _tokenize(text: str) -> set:
 
 
 def real_search_tool(query: str) -> str:
-    if not _active_search_corpus:
-        return fake_search_tool(query)
+    if _active_search_corpus:
+        query_tokens = _tokenize(query)
+        scored = [
+            (len(query_tokens & _tokenize(doc["title"] + " " + doc["text"][:500])), doc)
+            for doc in _active_search_corpus
+        ]
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        best_doc = scored[0][1]
+        snippet = best_doc["text"][:1200]
+        return f"Wikipedia: {best_doc['title']} ({best_doc['url']})\n{snippet}"
 
-    query_tokens = _tokenize(query)
-    scored = [
-        (len(query_tokens & _tokenize(doc["title"] + " " + doc["text"][:500])), doc)
-        for doc in _active_search_corpus
-    ]
-    scored.sort(key=lambda pair: pair[0], reverse=True)
-    best_doc = scored[0][1]
-
-    snippet = best_doc["text"][:1200]
-    return f"Wikipedia: {best_doc['title']} ({best_doc['url']})\n{snippet}"
+    try:
+        result = wikipedia_search(query)
+    except requests.RequestException as e:
+        return f"Search failed for '{query}' ({e})."
+    if result is None:
+        return f"No Wikipedia results found for '{query}'."
+    return f"Wikipedia: {result['title']} ({result['url']})\n{result['text']}"
 
 
 def execute_python_tool(code: str) -> str:
@@ -297,9 +309,9 @@ TOOLS = [
         "function": {
             "name": "query_database",
             "description": (
-                "Query a local outdoor-gear product catalog (backpacks, footwear, tents, sleeping "
-                "bags, trekking poles). query_type is one of: 'search' (filter by search_term/"
-                "category/max_price/in_stock_only), 'get_by_id' (needs product_id), or "
+                "Query a local general retail product catalog (electronics, books, kitchenware, "
+                "office supplies, toys, beauty). query_type is one of: 'search' (filter by "
+                "search_term/category/max_price/in_stock_only), 'get_by_id' (needs product_id), or "
                 "'list_categories' (no other args)."
             ),
             "parameters": {

@@ -12,6 +12,10 @@ deliberately simplified relative to that paper's full adaptation
 FRAMES: 824 multi-hop questions, each requiring 2-15 Wikipedia articles to
 answer, with a gold answer and a reasoning_types label. The dataset itself
 only ships Wikipedia URLs, not article text -- that's fetched here.
+
+Also provides wikipedia_search(), a general-purpose live search (not tied
+to any FRAMES question) used as web_search's default real-mode behavior
+for non-FRAMES tasks.
 """
 
 import ast
@@ -97,6 +101,32 @@ def fetch_wikipedia_extract(url: str, max_chars: int = MAX_CHARS_PER_DOC):
         json.dump({"title": real_title, "text": text}, f)
 
     return real_title, text[:max_chars]
+
+
+def wikipedia_search(query: str, max_chars: int = 1200) -> dict:
+    """
+    general-purpose LIVE Wikipedia search -- NOT scoped to a FRAMES question's
+    pre-fetched gold documents. Searches Wikipedia for `query` and fetches the
+    top hit's real extract. This is what makes web_search genuinely real for
+    tasks outside the FRAMES benchmark (arbitrary diverse topics), instead of
+    silently falling back to fake data for anything non-FRAMES.
+    returns None if there are no search hits.
+    """
+    resp = requests.get(
+        "https://en.wikipedia.org/w/api.php",
+        params={"action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 1},
+        headers={"User-Agent": _USER_AGENT},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    hits = resp.json()["query"]["search"]
+    if not hits:
+        return None
+
+    title = hits[0]["title"]
+    url = "https://en.wikipedia.org/wiki/" + title.replace(" ", "_")
+    real_title, text = fetch_wikipedia_extract(url, max_chars=max_chars)
+    return {"title": real_title, "url": url, "text": text}
 
 
 def build_corpus(question: dict, max_chars: int = MAX_CHARS_PER_DOC) -> list[dict]:

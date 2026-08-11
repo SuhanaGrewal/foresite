@@ -1,10 +1,11 @@
 """
 Catalog Database
- 
-A small local SQLite database (an outdoor-gear product catalog, fitting
-the project's existing hiking/trail-themed tasks) that the agent queries
-through a constrained, parameterized interface, not raw SQL.
- 
+
+A small local SQLite database -- a general multi-category retail catalog,
+deliberately spanning unrelated domains (electronics, books, kitchenware,
+office supplies, toys, beauty) rather than one theme -- that the agent
+queries through a constrained, parameterized interface, not raw SQL.
+
 - the model never sees or writes SQL
 - it can only call query_database with a small, typed set of arguments
 - those arguments are turned into parameterized queries below, every
@@ -17,18 +18,23 @@ DB_PATH = "catalog.db"
 
 _SEED_PRODUCTS = [
     # (name, category, price_usd, in_stock_count, rating)
-    ("Trailhead 40L Backpack", "backpack", 129.99, 34, 4.5),
-    ("Summit Pro 65L Backpack", "backpack", 219.99, 12, 4.7),
-    ("Daywalker 20L Backpack", "backpack", 59.99, 58, 4.2),
-    ("Ridgeline Hiking Boots", "footwear", 149.99, 22, 4.6),
-    ("Trailrunner Mesh Shoes", "footwear", 89.99, 40, 4.3),
-    ("AlpinePeak 2-Person Tent", "tent", 249.99, 9, 4.8),
-    ("Basecamp 4-Person Tent", "tent", 349.99, 5, 4.4),
-    ("Ultralight Solo Tent", "tent", 179.99, 15, 4.5),
-    ("CloudNine 20F Sleeping Bag", "sleeping_bag", 139.99, 27, 4.6),
-    ("Frostguard 0F Sleeping Bag", "sleeping_bag", 219.99, 11, 4.7),
-    ("Carbon Trekking Poles (pair)", "trekking_poles", 79.99, 45, 4.4),
-    ("Aluminum Trekking Poles (pair)", "trekking_poles", 39.99, 63, 4.1),
+    ("Noise-Cancelling Wireless Headphones", "electronics", 89.99, 41, 4.5),
+    ("27-inch 4K Monitor", "electronics", 329.99, 8, 4.6),
+    ("Portable Bluetooth Speaker", "electronics", 44.99, 67, 4.2),
+    ("Mechanical Keyboard", "electronics", 74.99, 23, 4.4),
+    ("A Brief History of Time", "books", 14.99, 52, 4.7),
+    ("The Midnight Library", "books", 12.99, 38, 4.3),
+    ("Atomic Habits", "books", 16.99, 90, 4.8),
+    ("Cast Iron Skillet, 12-inch", "kitchenware", 34.99, 44, 4.6),
+    ("6-Piece Chef Knife Set", "kitchenware", 59.99, 19, 4.4),
+    ("Stovetop Espresso Maker", "kitchenware", 27.99, 33, 4.3),
+    ("Mechanical Pencil Set (12-pack)", "office_supplies", 9.99, 120, 4.1),
+    ("Ergonomic Office Chair", "office_supplies", 189.99, 6, 4.5),
+    ("Desk Organizer Tray", "office_supplies", 19.99, 71, 4.0),
+    ("Wooden Building Blocks Set", "toys", 29.99, 26, 4.6),
+    ("Remote Control Car", "toys", 39.99, 18, 4.2),
+    ("SPF 50 Facial Sunscreen", "beauty", 15.99, 88, 4.5),
+    ("Vitamin C Serum", "beauty", 22.99, 54, 4.4),
 ]
 
 
@@ -109,6 +115,6 @@ def list_categories() -> list[str]:
 if __name__ == "__main__":
     init_db()
     print("categories:", list_categories())
-    print("search 'tent' under $300:", search_products(search_term="tent", max_price=300))
+    print("search 'headphones' under $100:", search_products(search_term="headphones", max_price=100))
     print("product 1:", get_product_by_id(1))
     print("product 999:", get_product_by_id(999))

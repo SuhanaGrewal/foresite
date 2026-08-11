@@ -22,8 +22,8 @@ defaulting to the same one or two every time:
 - web_search(query): real web/reference lookup for facts, trivia, or general information.
 - execute_python(code): runs a short Python snippet (calculations, data processing, logic \
 checks) and returns its output.
-- query_database(query_type, ...): looks up products in a local outdoor-gear catalog \
-(backpacks, footwear, tents, sleeping bags, trekking poles) -- search by name/category/price, \
+- query_database(query_type, ...): looks up products in a local general retail catalog \
+(electronics, books, kitchenware, office supplies, toys, beauty) -- search by name/category/price, \
 fetch by id, or list categories.
 
 Rules:
@@ -276,7 +276,7 @@ async def orchestrate(user_task: str, trace_log_path: str = None) -> str:
 
 
 if __name__ == "__main__":
-    task = "Check trail conditions and weather for both Runyon Canyon and Griffith Park, then tell me which is the better hike this afternoon."
+    task = "Search for who invented the telephone, check the current weather in Boston, and find a book under $15 in the product catalog with a rating above 4.5."
     final_answer = asyncio.run(orchestrate(task, trace_log_path="traces/run_orchestrator_test.jsonl"))
     print("\n=== FINAL ANSWER ===")
     print(final_answer)
