@@ -14,6 +14,29 @@ with the cache simulator, and so this file's own row sequence can be
 cross-checked against the canonical one. Raw records are still read
 directly, since trace_to_events() drops per-record metadata (timestamp,
 agent_id, parent_id) this needs.
+
+Limitations -- deliberately out of scope for now:
+
+Within-agent execution-progress features (e.g. an "agent_step_fraction"
+of steps/max_steps, or raw counts like tool_calls_so_far,
+elapsed_seconds_since_agent_start, distinct_tools_used_so_far) are not
+built here, and shouldn't be added as standalone features without
+revisiting this first. A leak-free version of "how far into its own
+execution is this specific sub-agent" needs a denominator to normalize
+against, and there are only two ways to get one: a future value from
+this same trace (that's leakage, not allowed), or a historical average
+from prior traces of the same task type (which needs enough collected
+trace volume to be a meaningful estimate, and we don't have that yet).
+This was tried before as fraction_of_trace_completed and removed for
+exactly this reason -- see the comment in build_rows_for_trace(). Revisit
+once enough historical trace data exists to compute reliable
+per-task-type averages using only traces OTHER than the one being
+featurized.
+
+dag_completion_fraction (completed_subtasks / total_subtasks_in_plan) is
+unaffected by this limitation, since the DAG's total sub-task count is
+known upfront from the plan itself, not from this trace's actual future
+execution -- it just isn't built in this file yet.
 """
 
 import glob
@@ -228,10 +251,16 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
     # anything after it.
     last_seen_index: dict[str, int] = {}
     last_seen_ts: dict[str, str] = {}
-    agent_touch_counts = {}
-    for t in touches:
-        agent_touch_counts[t["agent_id"]] = agent_touch_counts.get(t["agent_id"], 0) + 1
-    agent_seen_so_far: dict[str, int] = {}
+
+    # A within-agent execution-progress feature (fraction_of_trace_completed
+    # = agent_seen_so_far / agent's eventual total touch count) used to be
+    # computed here and was deliberately removed. Its denominator was that
+    # agent's FINAL touch count -- only knowable once the agent's run has
+    # actually finished, i.e. a future value from this same trace. The only
+    # leak-free way to normalize "how far along is this sub-agent" is a
+    # historical average from other traces of the same task type, which
+    # needs more collected trace volume than we have right now to be
+    # meaningful. See the module docstring's Limitations section.
 
     rows = []
     for i, t in enumerate(touches):
@@ -247,10 +276,6 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
             steps_since_last_seen = -1
             seconds_since_last_seen = -1.0
 
-        agent_seen_so_far[agent] = agent_seen_so_far.get(agent, 0) + 1
-        # this agent's own progress through its own run, not the whole trace
-        fraction_of_trace_completed = agent_seen_so_far[agent] / agent_touch_counts[agent]
-
         raw_agent = _strip_agent_prefix(agent)
 
         row = {
@@ -265,7 +290,6 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
             "token_count": t["token_count"],
             "steps_since_last_seen": steps_since_last_seen,
             "seconds_since_last_seen": seconds_since_last_seen,
-            "fraction_of_trace_completed": fraction_of_trace_completed,
             "measured_latency_seconds": t["measured_latency_seconds"],
             "agent_depth": _compute_agent_depth(agent, parent_map),
             "fan_out": fan_out_map.get(raw_agent, 0),
@@ -313,13 +337,9 @@ def _independent_recompute(touches: list[dict], i: int) -> dict:
     else:
         steps, seconds = -1, -1.0
 
-    agent_seen = sum(1 for e in touches[: i + 1] if e["agent_id"] == t["agent_id"])
-    agent_total = sum(1 for e in touches if e["agent_id"] == t["agent_id"])
-
     return {
         "steps_since_last_seen": steps,
         "seconds_since_last_seen": seconds,
-        "fraction_of_trace_completed": agent_seen / agent_total,
     }
 
 
@@ -328,14 +348,6 @@ def assert_no_leakage(rows: list[dict], touches: list[dict]) -> None:
     independent recomputation that structurally cannot see the future
     (touches[:i]), or if measured_latency_seconds is ever negative (which
     could only happen if it were measured against a later event).
-
-    Note on fraction_of_trace_completed: its denominator is that agent's
-    EVENTUAL total touch count, which is a whole-run aggregate only known
-    once a trace has finished -- fine for building this offline training
-    table (which only ever runs on completed traces), but it's a different
-    kind of leakage than the per-row timestamp/position leakage this
-    function checks, and a live/online predictor would need an approximation
-    of it rather than this exact value.
     """
     for i, row in enumerate(rows):
         expected = _independent_recompute(touches, i)
