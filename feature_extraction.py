@@ -56,9 +56,11 @@ from trace_agent_logs_converted import item_id, trace_to_events
 # is shared context, not scoped to one agent.
 REUSE_WINDOW_EVENTS = 5
 
-# No official tiktoken encoding exists for Gemma; cl100k_base is used as a
-# comparable general-purpose tokenizer for a real (non-character-proxy)
-# token count, per the "tiktoken or a comparable tokenizer" requirement.
+# No official tiktoken encoding exists for the models this project runs
+# (formerly Gemma via OpenRouter, now Qwen2.5 via local Ollama); cl100k_base
+# is used as a comparable general-purpose tokenizer for a real
+# (non-character-proxy) token count, per the "tiktoken or a comparable
+# tokenizer" requirement.
 _ENCODING = tiktoken.get_encoding("cl100k_base")
 
 

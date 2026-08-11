@@ -1,52 +1,68 @@
 """
 Trace Agent
 
-Runs a minimal agent through OpenRouter (Model = Google Gemma 4), using fake tools,
-and logs every step to a trace file.
+Runs a minimal agent through a local Ollama server (Model = Qwen2.5-1.5B-Instruct),
+using fake tools, and logs every step to a trace file.
 
 - intentionally simple; not meant to be a "good" agent
 - produces real log of agent behavior, fed into the cache simulator
+- talks to Ollama's *native* /api/chat (via the `ollama` python package), not its
+  OpenAI-compatible shim, because only the native API returns real per-call
+  timing fields (prompt_eval_count/duration, eval_count/duration, load_duration).
+  Those are logged alongside each model_call as an engine-reported proxy for
+  cache reuse -- Ollama doesn't expose a labeled prefix-cache-hit flag the way
+  vLLM's Prometheus endpoint does, so this is honestly a timing proxy, not a
+  hit/miss classification.
 
-Requires: pip install openai python-dotenv
-Requires: OPENROUTER_API_KEY set in a .env file in this folder
+Requires: pip install ollama
+Requires: `ollama serve` running locally, and `ollama pull qwen2.5:1.5b`
 """
 
 import json
-import os
 import threading
 import time
 from datetime import datetime, timezone
 
-from dotenv import load_dotenv
-load_dotenv()  # reads variables from a .env file in this folder, if present
+import ollama
 
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY"),
-)
-
-MODEL = "google/gemma-4-26b-a4b-it:free"
+MODEL = "qwen2.5:1.5b"
 
 
 def call_model_with_retry(messages, tools, max_retries=4):
     """
-    - retries the API call with backoff if rate limited or response is empty
+    - retries the API call with backoff if the local Ollama server errors out
+      (e.g. still loading the model, transient connection issue)
     """
     for attempt in range(max_retries):
-        response = client.chat.completions.create(
-            model=MODEL,
-            max_tokens=1024,
-            tools=tools,
-            messages=messages,
-        )
-        if response.choices is not None:
-            return response
+        try:
+            response = ollama.chat(model=MODEL, messages=messages, tools=tools)
+            if response.message is not None:
+                return response
+        except (ollama.ResponseError, ConnectionError) as e:
+            wait_seconds = 5 * (attempt + 1)
+            print(f"  [ollama error ({e}), retrying in {wait_seconds}s...]")
+            time.sleep(wait_seconds)
+            continue
         wait_seconds = 5 * (attempt + 1)
-        print(f"  [rate limited or empty response, retrying in {wait_seconds}s...]")
+        print(f"  [empty response, retrying in {wait_seconds}s...]")
         time.sleep(wait_seconds)
-    raise RuntimeError("Model call failed after multiple retries, likely rate limited.")
+    raise RuntimeError("Model call failed after multiple retries against local Ollama server.")
+
+
+def cache_metrics(response) -> dict:
+    """
+    pulls Ollama's real per-call timing fields off a chat response, for logging
+    alongside each model_call -- see module docstring for why these are a timing
+    proxy, not a real prefix-cache-hit signal.
+    """
+    return {
+        "load_duration_ns": response.load_duration,
+        "prompt_eval_count": response.prompt_eval_count,
+        "prompt_eval_duration_ns": response.prompt_eval_duration,
+        "eval_count": response.eval_count,
+        "eval_duration_ns": response.eval_duration,
+        "total_duration_ns": response.total_duration,
+    }
 
 
 TRACE_LOG_PATH = "traces.jsonl"
@@ -178,25 +194,35 @@ def run_agent(
 
     while step < max_steps:
         context_snapshot = json.dumps(messages)
-        log_step(step, "model_call", context_snapshot, agent_id=agent_id, parent_id=parent_id, trace_log_path=trace_log_path)
-
         response = call_model_with_retry(messages, TOOLS)
+        # logged after the call (not before, like the old OpenRouter version) so the
+        # real per-call cache-timing fields can ride along on the same trace row;
+        # context_snapshot itself is still the prompt state as it was *before* this call
+        log_step(
+            step,
+            "model_call",
+            context_snapshot,
+            agent_id=agent_id,
+            parent_id=parent_id,
+            trace_log_path=trace_log_path,
+            extra=cache_metrics(response),
+        )
 
-        choice = response.choices[0]
-        tool_calls = choice.message.tool_calls
+        message = response.message
+        tool_calls = message.tool_calls
 
         if not tool_calls:
-            final_text = choice.message.content or ""
+            final_text = message.content or ""
             log_step(step, "final_answer", final_text, agent_id=agent_id, parent_id=parent_id, trace_log_path=trace_log_path)
             print(f"\n[{agent_id}] Final answer:\n{final_text}")
             return final_text
 
         # add the model's response (including its tool request) to history
-        messages.append(choice.message.model_dump())
+        messages.append(message.model_dump())
 
         # run each requested tool and log it, then feed results back in
         for tc in tool_calls:
-            tool_input = json.loads(tc.function.arguments)
+            tool_input = tc.function.arguments  # ollama gives already-parsed dict args
             log_step(
                 step,
                 "tool_call",
@@ -210,7 +236,7 @@ def run_agent(
             messages.append(
                 {
                     "role": "tool",
-                    "tool_call_id": tc.id,
+                    "tool_name": tc.function.name,
                     "content": result,
                 }
             )

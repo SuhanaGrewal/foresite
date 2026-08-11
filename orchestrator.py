@@ -9,7 +9,7 @@ synthesizer combines their results into one final answer.
 import asyncio
 import json
 
-from trace_agent import call_model_with_retry, log_step, run_agent
+from trace_agent import cache_metrics, call_model_with_retry, log_step, run_agent
 
 
 PLANNER_SYSTEM_PROMPT = """You are a planning agent. Given a user task, break it into a small \
@@ -95,7 +95,7 @@ def plan_task(user_task: str) -> list[dict]:
     ]
 
     response = call_model_with_retry(messages, tools=None)
-    raw_text = response.choices[0].message.content or ""
+    raw_text = response.message.content or ""
     cleaned = _strip_code_fence(raw_text)
 
     try:
@@ -232,14 +232,23 @@ def synthesize(
         trace_log_path=trace_log_path,
         extra={"depends_on": sink_ids},
     )
-    log_step(0, "model_call", synthesis_prompt, agent_id="synthesizer", parent_id=planner_id, trace_log_path=trace_log_path)
-
     messages = [
         {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},
         {"role": "user", "content": synthesis_prompt},
     ]
     response = call_model_with_retry(messages, tools=None)
-    final_text = response.choices[0].message.content or ""
+    # logged after the call, like trace_agent.run_agent's loop, so the real
+    # per-call cache-timing fields land on the same trace row
+    log_step(
+        0,
+        "model_call",
+        synthesis_prompt,
+        agent_id="synthesizer",
+        parent_id=planner_id,
+        trace_log_path=trace_log_path,
+        extra=cache_metrics(response),
+    )
+    final_text = response.message.content or ""
 
     log_step(0, "final_answer", final_text, agent_id="synthesizer", parent_id=planner_id, trace_log_path=trace_log_path)
     print(f"\n[synthesizer] Final answer:\n{final_text}")
