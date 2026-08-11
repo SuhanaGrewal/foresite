@@ -4,34 +4,36 @@ Feature Extraction
 Converts traces/run_N.jsonl files into a labeled, per-item-touch feature
 table for training a cache-eviction predictor.
 
-Row = one item_id's occurrence at one point in one trace. This mirrors the
-granularity trace_to_events() already established (one touch per message
-inside a growing model_call snapshot, one touch per tool_call/final_answer,
-spawn events excluded entirely since they're orchestrator bookkeeping, not
-real content a model ever processed). item_id() and trace_to_events() are
-imported from trace_agent_logs_converted.py so hashing stays consistent
-with the cache simulator, and so this file's own row sequence can be
-cross-checked against the canonical one. Raw records are still read
-directly, since trace_to_events() drops per-record metadata (timestamp,
-agent_id, parent_id) this needs.
+- row = one item_id's occurrence at one point in one trace
+- mirrors the granularity trace_to_events() already established: one
+  touch per message inside a growing model_call snapshot, one touch per
+  tool_call/final_answer, spawn events excluded entirely (bookkeeping,
+  not real content a model ever processed)
+- item_id() and trace_to_events() are imported from
+  trace_agent_logs_converted.py so hashing stays consistent with the
+  cache simulator, and this file's own row sequence can be cross-checked
+  against the canonical one
+- raw records are still read directly, since trace_to_events() drops
+  per-record metadata (timestamp, agent_id, parent_id) this needs
 
-Limitations -- deliberately out of scope for now:
+Limitations, deliberately out of scope for now:
 
-Within-agent execution-progress features (e.g. an "agent_step_fraction"
-of steps/max_steps, or raw counts like tool_calls_so_far,
-elapsed_seconds_since_agent_start, distinct_tools_used_so_far) are not
-built here, and shouldn't be added as standalone features without
-revisiting this first. A leak-free version of "how far into its own
-execution is this specific sub-agent" needs a denominator to normalize
-against, and there are only two ways to get one: a future value from
-this same trace (that's leakage, not allowed), or a historical average
-from prior traces of the same task type (which needs enough collected
-trace volume to be a meaningful estimate, and we don't have that yet).
-This was tried before as fraction_of_trace_completed and removed for
-exactly this reason -- see the comment in build_rows_for_trace(). Revisit
-once enough historical trace data exists to compute reliable
-per-task-type averages using only traces OTHER than the one being
-featurized.
+- within-agent execution-progress features (an "agent_step_fraction" of
+  steps/max_steps, or raw counts like tool_calls_so_far,
+  elapsed_seconds_since_agent_start, distinct_tools_used_so_far) are not
+  built here, and shouldn't be added as standalone features without
+  revisiting this first
+- a leak-free version of "how far into its own execution is this
+  specific sub-agent" needs a denominator to normalize against, and
+  there are only two ways to get one: a future value from this same
+  trace (leakage, not allowed), or a historical average from prior
+  traces of the same task type (needs more collected trace volume than
+  we have right now to be meaningful)
+- this was tried before as fraction_of_trace_completed and removed for
+  exactly this reason, see the comment in build_rows_for_trace()
+- revisit once enough historical trace data exists to compute reliable
+  per-task-type averages using only traces OTHER than the one being
+  featurized
 
 dag_completion_fraction (completed_subtasks / total_subtasks_in_plan) is
 unaffected by this limitation and IS built: the DAG's total sub-task
@@ -65,45 +67,54 @@ def _parse_ts(ts_str: str) -> datetime:
 
 
 def _load_records(trace_path: str) -> list[dict]:
+    """
+    - reads every record from a trace file
+    - sorts by timestamp defensively: append order should already be
+      chronological (writes are lock-guarded in log_step), but each
+      record's timestamp is computed just before that lock is acquired,
+      so under a rare thread-scheduling race, file order could diverge
+      slightly from true timestamp order
+    - row order must be trustworthy, since every "since last seen" and
+      label calculation depends on it
+    """
     records = []
     with open(trace_path) as f:
         for line in f:
             records.append(json.loads(line))
-    # Append order should already be chronological (writes are lock-guarded
-    # in log_step), but each record's timestamp is computed just before that
-    # lock is acquired, so under a rare thread-scheduling race, file order
-    # could diverge slightly from true timestamp order. Sort defensively --
-    # row order must be trustworthy since every "since last seen" and label
-    # calculation depends on it.
     records.sort(key=lambda r: r["timestamp"])
     return records
 
 
 def _annotate_records(records: list[dict], depends_on_map: dict) -> list[dict]:
-    """Compute the record-level fields we derive ourselves: token_count,
-    measured_latency_seconds, and dag_completion_fraction. All three are
-    computed once per record and reused across every touch exploded out of
-    that record -- same scope as the already-logged content_length_chars,
-    since all of these describe "how big/slow/far-along was the run at this
-    step", not any one message's own size.
+    """
+    - computes the record-level fields we derive ourselves: token_count,
+      measured_latency_seconds, and dag_completion_fraction
+    - all three computed once per record and reused across every touch
+      exploded out of that record -- same scope as the already-logged
+      content_length_chars, since all of these describe "how big/slow/
+      far-along was the run at this step", not any one message's own size
 
-    measured_latency_seconds is backward-looking: the gap between this
-    model_call and this SAME agent_id's previous logged record (any event
-    type). Only computed for model_call records, since that's what "this
-    model_call's timestamp" refers to; None for an agent's first record,
-    since nothing meaningful precedes it, and None for non-model_call
-    records. A forward-looking (next-event) definition was ruled out because
-    it would read future information into a feature.
+    measured_latency_seconds:
+    - backward-looking: the gap between this model_call and this SAME
+      agent_id's previous logged record (any event type)
+    - only computed for model_call records, since that's what "this
+      model_call's timestamp" refers to
+    - None for an agent's first record (nothing meaningful precedes it),
+      and None for non-model_call records
+    - a forward-looking (next-event) definition was ruled out, since it
+      would read future information into a feature
 
-    dag_completion_fraction = completed_subtasks / total_subtasks_in_plan,
-    using only sub-agents that have already produced a final_answer in a
-    STRICTLY EARLIER record than this one (this record's own final_answer,
-    if it is one, does not count toward its own fraction -- same "never let
-    a row see its own event" rule as everything else in this file).
-    total_subtasks_in_plan excludes the synthesizer, since it's not part of
-    the planner's own DAG. Legacy single-agent traces have no DAG at all
-    (total_subtasks_in_plan == 0), so this is None there, not a divide by
-    zero.
+    dag_completion_fraction:
+    - completed_subtasks / total_subtasks_in_plan
+    - only counts sub-agents that produced a final_answer in a STRICTLY
+      EARLIER record than this one -- a record's own final_answer never
+      counts toward its own fraction, same "never let a row see its own
+      event" rule as everything else in this file
+    - total_subtasks_in_plan excludes the synthesizer, since it isn't
+      part of the planner's own DAG
+    - legacy single-agent traces have no DAG at all
+      (total_subtasks_in_plan == 0), so this is None there, not a
+      divide by zero
     """
     plan_subtask_ids = {agent for agent in depends_on_map if agent != "synthesizer"}
     total_subtasks = len(plan_subtask_ids)
@@ -139,8 +150,10 @@ def _annotate_records(records: list[dict], depends_on_map: dict) -> list[dict]:
 
 
 def _explode_touches(records: list[dict]) -> list[dict]:
-    """One entry per item_id occurrence, in trace order, carrying the
-    per-record metadata trace_to_events() throws away."""
+    """
+    - one entry per item_id occurrence, in trace order
+    - carries the per-record metadata trace_to_events() throws away
+    """
     touches = []
     for record in records:
         event_type = record["event_type"]
@@ -174,9 +187,12 @@ def _explode_touches(records: list[dict]) -> list[dict]:
 
 
 def _compute_labels(touches: list[dict], window: int = REUSE_WINDOW_EVENTS) -> list[int]:
-    """will_be_reused[i] = 1 if touches[i]'s item_id appears again anywhere
-    in touches[i+1 : i+1+window]. This is the ONLY place future positions
-    are read -- kept isolated from every feature-computing function below."""
+    """
+    - will_be_reused[i] = 1 if touches[i]'s item_id appears again anywhere
+      in touches[i+1 : i+1+window]
+    - this is the ONLY place future positions are read, kept isolated
+      from every feature-computing function below
+    """
     labels = [0] * len(touches)
     for i, t in enumerate(touches):
         future_ids = {touches[j]["item_id"] for j in range(i + 1, min(i + 1 + window, len(touches)))}
@@ -185,19 +201,22 @@ def _compute_labels(touches: list[dict], window: int = REUSE_WINDOW_EVENTS) -> l
 
 
 def _strip_agent_prefix(agent_id: str) -> str:
-    """depends_on lists use raw sub-task ids (e.g. "weather_tokyo"), but
-    sub-agents' own agent_id carries a "subagent_" prefix. Strip it so the
-    two vocabularies can be compared directly."""
+    """
+    - depends_on lists use raw sub-task ids (e.g. "weather_tokyo")
+    - sub-agents' own agent_id carries a "subagent_" prefix
+    - strips it so the two vocabularies can be compared directly
+    """
     prefix = "subagent_"
     return agent_id[len(prefix):] if agent_id.startswith(prefix) else agent_id
 
 
 def _build_graph_maps(records: list[dict]) -> tuple[dict, dict]:
-    """From the RAW records (spawn events included -- these are read
-    directly per the requirement, not through the item-touch pipeline):
+    """
+    - reads from the RAW records (spawn events included, read directly
+      per the requirement, not through the item-touch pipeline)
     - parent_map: agent_id -> parent_id (same for every record of that agent)
-    - depends_on_map: agent_id -> raw dependency ids, from that agent's own
-      spawn record only (legacy single-agent traces have none)
+    - depends_on_map: agent_id -> raw dependency ids, from that agent's
+      own spawn record only (legacy single-agent traces have none)
     """
     parent_map: dict[str, str] = {}
     depends_on_map: dict[str, list] = {}
@@ -211,14 +230,17 @@ def _build_graph_maps(records: list[dict]) -> tuple[dict, dict]:
 
 
 def _compute_agent_depth(agent_id: str, parent_map: dict) -> int:
-    """Hops back to a root, walking parent_id generically rather than
-    hardcoding the string "planner" -- the planner's own decomposition call
-    is never itself logged as a row today, so any parent_id that isn't
-    itself a logged agent_id is treated as one implicit hop to an external
-    root. This gives depth 0 to legacy "main" traces (parent_id=None) and
-    depth 1 to today's sub-agents/synthesizer (parent_id="planner",
-    unresolvable), while still supporting real multi-level chains if the
-    schema ever grows one."""
+    """
+    - hops back to a root, walking parent_id generically rather than
+      hardcoding the string "planner"
+    - the planner's own decomposition call is never itself logged as a
+      row today, so any parent_id that isn't itself a logged agent_id is
+      treated as one implicit hop to an external root
+    - gives depth 0 to legacy "main" traces (parent_id=None) and depth 1
+      to today's sub-agents/synthesizer (parent_id="planner",
+      unresolvable), while still supporting real multi-level chains if
+      the schema ever grows one
+    """
     depth = 0
     current = agent_id
     seen = set()
@@ -235,11 +257,12 @@ def _compute_agent_depth(agent_id: str, parent_map: dict) -> int:
 
 def _compute_fan_out_and_sink_deps(depends_on_map: dict) -> tuple[dict, set]:
     """
-    fan_out[raw_id] = how many other agents' depends_on lists name raw_id.
-    sink ids = the synthesizer's own depends_on -- literally the DAG's
-    terminal sub-tasks, whatever the plan's shape.
-    dependency_of_sink = union of the sink agents' own depends_on lists, so
-    "is this row a prerequisite of something that feeds the final answer".
+    - fan_out[raw_id] = how many other agents' depends_on lists name raw_id
+    - sink ids = the synthesizer's own depends_on, literally the DAG's
+      terminal sub-tasks, whatever the plan's shape
+    - dependency_of_sink = union of the sink agents' own depends_on
+      lists, i.e. "is this row a prerequisite of something that feeds
+      the final answer"
     """
     fan_out: dict[str, int] = {}
     for deps in depends_on_map.values():
@@ -278,15 +301,15 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
     last_seen_index: dict[str, int] = {}
     last_seen_ts: dict[str, str] = {}
 
-    # A within-agent execution-progress feature (fraction_of_trace_completed
+    # a within-agent execution-progress feature (fraction_of_trace_completed
     # = agent_seen_so_far / agent's eventual total touch count) used to be
-    # computed here and was deliberately removed. Its denominator was that
-    # agent's FINAL touch count -- only knowable once the agent's run has
-    # actually finished, i.e. a future value from this same trace. The only
+    # computed here and was deliberately removed. its denominator was that
+    # agent's FINAL touch count, only knowable once the agent's run had
+    # actually finished, i.e. a future value from this same trace. the only
     # leak-free way to normalize "how far along is this sub-agent" is a
     # historical average from other traces of the same task type, which
     # needs more collected trace volume than we have right now to be
-    # meaningful. See the module docstring's Limitations section.
+    # meaningful. see the module docstring's limitations section.
 
     rows = []
     for i, t in enumerate(touches):
@@ -332,8 +355,8 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
         last_seen_index[iid] = i
         last_seen_ts[iid] = t["timestamp"]
 
-    # Correctness cross-check: our row sequence's item_ids, in order, must
-    # exactly match the canonical trace_to_events() output for this file.
+    # correctness cross-check: our row sequence's item_ids, in order, must
+    # exactly match the canonical trace_to_events() output for this file
     expected = trace_to_events(trace_path)
     actual = [r["item_id"] for r in rows]
     assert actual == expected, (
@@ -344,15 +367,18 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
     return rows, touches, depends_on_map
 
 
-# --- leakage check ---------------------------------------------------------
+# leakage check
 
 def _independent_recompute(touches: list[dict], i: int, depends_on_map: dict) -> dict:
-    """Recompute row i's backward-looking features completely independently,
-    using ONLY touches[:i] -- a hard slice cutoff that makes it structurally
-    impossible for this recomputation to see row i or anything later. Used
-    to verify the running-state implementation in build_rows_for_trace
-    against a second, independently-written path, not just re-derive the
-    same code."""
+    """
+    - recomputes row i's backward-looking features completely
+      independently, using ONLY touches[:i]
+    - a hard slice cutoff that makes it structurally impossible for this
+      recomputation to see row i or anything later
+    - used to verify the running-state implementation in
+      build_rows_for_trace against a second, independently-written path,
+      not just re-derive the same code
+    """
     t = touches[i]
     earlier = touches[:i]
 
@@ -384,10 +410,12 @@ def _independent_recompute(touches: list[dict], i: int, depends_on_map: dict) ->
 
 
 def assert_no_leakage(rows: list[dict], touches: list[dict], depends_on_map: dict) -> None:
-    """Fails loudly if any backward-looking feature doesn't match an
-    independent recomputation that structurally cannot see the future
-    (touches[:i]), or if measured_latency_seconds is ever negative (which
-    could only happen if it were measured against a later event).
+    """
+    - fails loudly if any backward-looking feature doesn't match an
+      independent recomputation that structurally cannot see the future
+      (touches[:i])
+    - also fails if measured_latency_seconds is ever negative, which
+      could only happen if it were measured against a later event
     """
     for i, row in enumerate(rows):
         expected = _independent_recompute(touches, i, depends_on_map)
@@ -413,7 +441,7 @@ def assert_no_leakage(rows: list[dict], touches: list[dict], depends_on_map: dic
             )
 
 
-# --- multi-trace assembly ---------------------------------------------------
+# multi-trace assembly
 
 def build_feature_table(trace_paths: list[str], window: int = REUSE_WINDOW_EVENTS) -> pd.DataFrame:
     all_rows = []
