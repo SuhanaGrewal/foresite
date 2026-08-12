@@ -1,16 +1,10 @@
 """
 Run FRAMES Batch
 
-Runs real FRAMES benchmark questions (Krishna et al.) through the full
-orchestrator pipeline, with web_search grounded in that question's real
-gold Wikipedia articles (fetched by frames_data.py). See
-trace_agent.py's real_search_tool docstring for how this adapts FRAMES
-(a single-shot QA benchmark) into a multi-step agentic task, and what's
-deliberately simplified relative to IntentKV's full adaptation.
-
-Prints the model's final answer next to FRAMES' gold answer for each
-question -- this is NOT an automated grader (that needs a real exact-match
-scorer or LLM-judge, out of scope here), just something to eyeball.
+- runs real FRAMES benchmark questions through the full orchestrator pipeline, with web_search grounded in that question's real 
+  Wikipedia articles (fetched by frames_data.py). 
+- see trace_agent.py's real_search_tool docstring for how this adapts FRAMES (a QA benchmark) into a multi-step agentic task.
+- prints the model's final answer next to FRAMES' gold answer for each question.
 """
 
 import asyncio
