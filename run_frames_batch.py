@@ -20,7 +20,7 @@ from frames_data import build_corpus, load_frames_questions
 from orchestrator import orchestrate
 from trace_agent import clear_search_corpus, set_search_corpus
 
-N_QUESTIONS = 3
+N_QUESTIONS = 10
 
 
 async def run_frames_batch():
