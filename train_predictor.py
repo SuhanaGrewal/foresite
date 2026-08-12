@@ -2,25 +2,11 @@
 Train Predictor
  
 Trains a cache-reuse predictor from a features CSV produced by
-feature_extraction.py (schema: trace_id, row_index, item_id, agent_id,
-parent_id, event_type, timestamp, ... will_be_reused, event_type_*).
- 
-*** PIPELINE CORRECTNESS CHECK, NOT A REAL RESULT ***
-- as of this writing there are only a handful of real traces (well under
-  50 rows total), and the default run uses entirely synthetic data from
-  generate_fake_features.py
-- AUC-ROC / PR-AUC numbers printed by this script are not statistically
-  meaningful at this sample size and must not be quoted as a real
-  evaluation of the model
-- re-run against a larger, real features.csv before drawing any conclusions
+feature_extraction.py.
  
 Two models are trained:
-- logistic regression: baseline, coefficients printed for inspection
+- Logistic regression: baseline, coefficients printed for inspection
 - XGBoost: primary model
- 
-The train/test split is done at the TRACE level, never row level, since
-rows within one trace are correlated -- a row-level split would leak
-information from a trace's other rows into the test set.
  
 TODO(more data):
 - once there are enough traces to do a meaningful GroupKFold split
