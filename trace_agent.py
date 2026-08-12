@@ -2,26 +2,14 @@
 Trace Agent
 
 Runs a minimal agent through a local Ollama server (Model = Qwen2.5-1.5B-Instruct)
-with four tools -- get_weather (real, Open-Meteo), web_search (real Wikipedia
-text: a FRAMES question's gold documents when one is active, otherwise a live
-general Wikipedia search -- real either way, no silent fake-data shortcut),
-execute_python (real sandboxed code execution), query_database (real SQLite
-product catalog, constrained lookup interface) -- and logs every step to a
-trace file.
+with four tools and logs every step to a trace file.
 
 - intentionally simple; not meant to be a "good" agent
-- produces real log of agent behavior, fed into the cache simulator
-- talks to Ollama's *native* /api/chat (via the `ollama` python package), not its
-  OpenAI-compatible shim, because only the native API returns real per-call
-  timing fields (prompt_eval_count/duration, eval_count/duration, load_duration).
-  Those are logged alongside each model_call as an engine-reported proxy for
-  cache reuse -- Ollama doesn't expose a labeled prefix-cache-hit flag the way
-  vLLM's Prometheus endpoint does, so this is honestly a timing proxy, not a
-  hit/miss classification.
-
-Requires: pip install ollama
-Requires: `ollama serve` running locally, and `ollama pull qwen2.5:1.5b`
-"""
+- produces a real log of agent behavior, fed into the cache simulator
+- talks to Ollama's *native* /api/chat, not its OpenAI-compatible shim, because only the native API returns real per-call
+  timing fields.
+- per-call timing fields are logged alongside each model_call as an engine-reported proxy for cache reuse.
+  """
 
 import json
 import os
@@ -39,7 +27,7 @@ from frames_data import wikipedia_search
 
 init_db()
 
-MODEL = "qwen2.5:1.5b"
+MODEL = "qwen2.5:7b"
 
 # set to "false" to fall back to the old hardcoded fake tool outputs, for
 # quick offline/API-cost-free iteration (see fake_weather_tool/fake_search_tool)
@@ -71,8 +59,7 @@ def call_model_with_retry(messages, tools, max_retries=4):
 def cache_metrics(response) -> dict:
     """
     pulls Ollama's real per-call timing fields off a chat response, for logging
-    alongside each model_call -- see module docstring for why these are a timing
-    proxy, not a real prefix-cache-hit signal.
+    alongside each model_call. these are a timing proxy, not a real prefix-cache-hit signal.
     """
     return {
         "load_duration_ns": response.load_duration,
