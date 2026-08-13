@@ -11,7 +11,7 @@ Two models are trained:
 Evaluated two ways:
 - a single trace-level train/test split (kept for the printed baseline
   coefficients and as the split the persisted model is trained on)
-- GroupKFold cross-validation (group = trace_id, so no trace's rows ever
+- GroupKFold cross-validation (group = trace_id, so no trace's rows everx
   span both sides of a fold), reporting AUC-ROC/PR-AUC mean +/- standard
   deviation across folds -- a far more reliable read on generalization
   than any single split, now that there's enough trace data (100+
@@ -94,15 +94,11 @@ def safe_auc(y_true, y_score, metric_fn, metric_name):
 
 def cross_validate(df, feature_names, n_splits=N_CV_SPLITS, random_seed=RANDOM_SEED):
     """
-    GroupKFold cross-validation grouped by trace_id -- same reasoning as
-    split_by_trace: rows within one trace are correlated, so a trace's rows
+    GroupKFold cross-validation grouped by trace_id: rows within one trace are correlated, so a trace's rows
     must never span both the train and validation side of a fold, or that's
     leakage into the validation score.
 
-    fits a fresh baseline + primary model per fold, returns a dict of
-    {model_name: {"auc_roc": [...], "pr_auc": [...]}} with one value per
-    fold that had both classes present in its validation split (folds
-    without both classes are skipped and reported, not silently dropped).
+    fits a fresh baseline + primary model per fold.
     """
     X = df[feature_names]
     y = df[TARGET_COLUMN]
