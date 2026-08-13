@@ -114,6 +114,13 @@ heuristic or Belady's future-lookahead cheat.
   carry).
 - Evicts whichever cached item has the LOWEST predicted reuse probability --
   the item the model is most confident won't be touched again soon.
+
+LIMITATION, fixed by run_predictor_dynamic below: feature_lookup is a single
+static vector per item_id, so however it was built, every touch of that item
+scores identically for the whole run -- an item's score never reflects how
+recently or how often it's actually been touched DURING this simulation.
+Kept here as a general "score from a precomputed static lookup" primitive;
+the benchmark (run_eviction_benchmark.py) uses the dynamic version instead.
 '''
 
 def run_predictor(events, cache_size, model, feature_lookup):
@@ -137,6 +144,80 @@ def run_predictor(events, cache_size, model, feature_lookup):
                 cache.remove(victim)
             cache.add(item)
     return hits / len(events)
+
+
+''' Predictor Algorithm, Dynamic (Step 6, fixed): re-scores an item's
+predicted reuse probability EVERY time it's touched, not just once -- the
+same "update the item's state on every touch" pattern LRU (recency) and LFU
+(frequency) already use, instead of run_predictor's frozen static lookup.
+
+- `touches` is a list of per-touch dicts: {"item_id": ..., "static_features":
+  {feature_name: value, ...}}. static_features holds this specific touch's
+  own real values for content_length_chars, token_count,
+  measured_latency_seconds, dag_completion_fraction, agent_depth, fan_out,
+  is_dependency_of_sink, event_type_* -- properties of WHAT this touch is
+  (which message/tool-call/final-answer, from its own original trace),
+  which don't have a coherent "live" redefinition when multiple unrelated
+  traces are concatenated (e.g. dag_completion_fraction is "completed
+  subtasks / total subtasks in THIS trace's plan" -- concatenating two
+  different tasks' DAG-completion fractions into one number means nothing).
+  static_features may also carry placeholder values for row_index/
+  steps_since_last_seen/seconds_since_last_seen from this touch's ORIGINAL
+  per-trace occurrence; those three are always overwritten below with
+  values recomputed live against the combined sequence, never used as-is.
+- row_index, steps_since_last_seen, and seconds_since_last_seen ARE
+  recomputed live, from the combined sequence's own traversal state as
+  touches replay in order -- these are the features that genuinely change
+  meaning once multiple traces share one cache timeline.
+- seconds_since_last_seen uses a simulated 1-second-per-touch clock (equal
+  to steps_since_last_seen), since this simulator -- like LRU/LFU/Belady's
+  above -- operates on abstract discrete touch-steps, not real wall-clock
+  time. Concatenated traces' real timestamps come from unrelated runs at
+  unrelated real times; diffing them across a trace boundary would produce
+  an arbitrary number, not a meaningful "how long ago" for this shared cache.
+- computed in two passes for efficiency: a first pass builds every touch's
+  live feature row (pure bookkeeping, no model calls -- each touch's live
+  features only ever depend on touches strictly before it, so this stays
+  causal/backward-looking, same discipline feature_extraction.py's leakage
+  check enforces), then ONE batched model.predict_proba call scores every
+  touch at once, then a second pass replays the cache simulation using
+  those precomputed scores. Equivalent to scoring one touch at a time, but
+  far fewer individual model calls.
+'''
+
+def run_predictor_dynamic(touches, cache_size, model, feature_names):
+    last_seen_position = {}
+    live_rows = []
+    for i, touch in enumerate(touches):
+        item_id = touch["item_id"]
+        steps_since_last_seen = i - last_seen_position[item_id] if item_id in last_seen_position else -1
+        seconds_since_last_seen = float(steps_since_last_seen) if steps_since_last_seen != -1 else -1.0
+
+        row = dict(touch["static_features"])
+        row["row_index"] = i
+        row["steps_since_last_seen"] = steps_since_last_seen
+        row["seconds_since_last_seen"] = seconds_since_last_seen
+        live_rows.append(row)
+
+        last_seen_position[item_id] = i
+
+    X = [[row[name] for name in feature_names] for row in live_rows]
+    scores = model.predict_proba(X)[:, 1]  # one predicted-reuse-probability score per touch, in order
+
+    cache = set()
+    hits = 0
+    current_score = {}  # item_id -> most recent predicted score, updated every touch
+    for i, touch in enumerate(touches):
+        item_id = touch["item_id"]
+        current_score[item_id] = scores[i]
+        if item_id in cache:
+            hits += 1
+        else:
+            if len(cache) >= cache_size:
+                victim = min(cache, key=lambda x: current_score[x])  # evict lowest CURRENT predicted reuse probability
+                cache.remove(victim)
+            cache.add(item_id)
+    return hits / len(touches)
 
 
 if __name__ == "__main__":

@@ -2,22 +2,34 @@
 Run Eviction Benchmark
 
 Final evaluation (Step 6): benchmarks the trained predictor as a real
-cache-eviction policy (run_predictor, kv-cache-simulator.py) against
-LRU, LFU, and Belady's optimal, on real held-out trace data -- not a
-fake generated event sequence.
+cache-eviction policy (run_predictor_dynamic, kv-cache-simulator.py)
+against LRU, LFU, and Belady's optimal, on real held-out trace data --
+not a fake generated event sequence.
 
 Reuses train_predictor.py's own trace-level train/test split (same
 features.csv, same RANDOM_SEED -- so this is exactly the 52 traces the
 trained model in model.joblib never saw during training or
-cross-validation, a genuine held-out set) and converts each test trace
-to its event sequence via trace_to_events() (trace_agent_logs_converted.py),
-then concatenates them into one combined sequence.
+cross-validation, a genuine held-out set), and builds one combined,
+per-touch sequence across all of them, in sorted trace_id then row_index
+order -- built directly from features.csv (not trace_to_events()), so
+every eviction policy benchmarked sees the exact identical sequence by
+construction. (feature_extraction.py asserts, every time it builds
+features.csv, that each trace's row order already matches
+trace_to_events() exactly, so this is a safe simplification, not an
+assumption taken on faith.)
 
 Concatenating (rather than evaluating each trace separately) simulates
 shared-cache contention: multiple different tasks' traces competing for
 the same fixed-size cache over time, the way a real serving system would
 see many concurrent/sequential requests sharing one KV cache -- not each
 task getting its own isolated cache.
+
+The predictor policy re-scores every item's predicted reuse probability
+on every touch, using live-recomputed temporal features (row_index,
+steps_since_last_seen, seconds_since_last_seen) against the combined
+sequence's own timeline -- see run_predictor_dynamic's docstring in
+kv-cache-simulator.py for exactly what's recomputed live vs. kept as
+each touch's own real per-occurrence value, and why.
 
 Runs LRU, LFU, Belady's optimal, and the predictor-driven policy on that
 combined sequence at a few cache sizes -- small/medium/large as a
@@ -31,7 +43,6 @@ import joblib
 import pandas as pd
 
 from train_predictor import clean_feature_values, load_features, split_by_trace
-from trace_agent_logs_converted import trace_to_events
 
 # kv-cache-simulator.py's filename has a hyphen, so it isn't a valid Python
 # module name and can't be reached with a normal `import` statement --
@@ -42,10 +53,9 @@ _kv_sim_spec.loader.exec_module(_kv_cache_simulator)
 run_lru = _kv_cache_simulator.run_lru
 run_lfu = _kv_cache_simulator.run_lfu
 run_belady = _kv_cache_simulator.run_belady
-run_predictor = _kv_cache_simulator.run_predictor
+run_predictor_dynamic = _kv_cache_simulator.run_predictor_dynamic
 
 FEATURES_CSV_PATH = "features.csv"
-TRACES_DIR = "traces"
 MODEL_PATH = "model.joblib"
 
 # cache sizes to benchmark, as a fraction of the combined sequence's
@@ -54,68 +64,48 @@ MODEL_PATH = "model.joblib"
 CACHE_SIZE_FRACTIONS = {"small": 0.05, "medium": 0.20, "large": 0.50}
 
 
-def build_combined_test_sequence(features_csv_path: str = FEATURES_CSV_PATH):
+def build_combined_test_touches(feature_names: list, features_csv_path: str = FEATURES_CSV_PATH):
     """
-    returns (combined_events, test_ids): the concatenated event sequence
-    across every held-out test trace (in sorted trace_id order, for
-    reproducibility), and the sorted list of test trace_ids used.
+    returns (touches, test_ids): touches is a list of per-touch dicts
+    ({"item_id": ..., "static_features": {...}}), one per real touch across
+    every held-out test trace, concatenated in sorted trace_id then
+    row_index order. static_features carries each touch's own real values
+    for every column in feature_names (cleaned identically to how
+    load_features() cleans training data, via the shared
+    clean_feature_values helper, so the model sees the same value
+    distribution at eviction time it saw during training) -- including
+    placeholder values for row_index/steps_since_last_seen/
+    seconds_since_last_seen, which run_predictor_dynamic always overwrites
+    with values recomputed live against the combined sequence.
     """
-    df = load_features(features_csv_path)
-    _, _, _, test_ids = split_by_trace(df)
+    df_for_split = load_features(features_csv_path)
+    _, _, _, test_ids = split_by_trace(df_for_split)
 
-    combined_events = []
-    for trace_id in test_ids:
-        trace_path = f"{TRACES_DIR}/{trace_id}.jsonl"
-        combined_events.extend(trace_to_events(trace_path))
+    raw = pd.read_csv(features_csv_path)
+    raw = raw[raw["trace_id"].isin(test_ids)].copy()
 
-    return combined_events, test_ids
+    # sorted trace_id order (matching test_ids), then row order within a
+    # trace -- this is what "concatenated in order" means for the combined
+    # sequence
+    raw["trace_id"] = pd.Categorical(raw["trace_id"], categories=sorted(test_ids), ordered=True)
+    raw = raw.sort_values(["trace_id", "row_index"])
+    raw = clean_feature_values(raw)
 
-
-def build_feature_lookup(features_csv_path: str, test_ids: list, feature_names: list) -> dict:
-    """
-    item_id -> feature vector (list, in feature_names order), built from
-    the held-out test traces' rows in features.csv, cleaned the exact same
-    way load_features() cleans training data (via the shared
-    clean_feature_values helper), so the model sees the same value
-    distribution at eviction time that it saw during training.
-
-    a single item_id can recur multiple times across the combined sequence
-    (repeated touches carry different time-varying feature values, e.g.
-    steps_since_last_seen). run_predictor's feature_lookup is a static
-    item_id -> one feature vector mapping (see its docstring in
-    kv-cache-simulator.py) -- this uses each item_id's FIRST occurrence
-    within the test set, the feature snapshot available at the point the
-    item would first enter the cache. a real, deliberate simplification
-    (one static score per item for the whole benchmark run, not re-scored
-    per touch), not a silently-swept-under-the-rug detail.
-    """
-    df = pd.read_csv(features_csv_path)
-    df = df[df["trace_id"].isin(test_ids)].copy()
-
-    # sort to match build_combined_test_sequence's ordering (sorted
-    # trace_id, then row order within a trace), so "first occurrence" here
-    # means the same thing as "first occurrence in combined_events"
-    df["trace_id"] = pd.Categorical(df["trace_id"], categories=sorted(test_ids), ordered=True)
-    df = df.sort_values(["trace_id", "row_index"])
-
-    df = clean_feature_values(df)
-
-    feature_lookup = {}
-    for item_id, feature_row in zip(df["item_id"], df[feature_names].to_numpy().tolist()):
-        if item_id not in feature_lookup:
-            feature_lookup[item_id] = feature_row
-    return feature_lookup
+    touches = [
+        {"item_id": record["item_id"], "static_features": {name: record[name] for name in feature_names}}
+        for record in raw[["item_id"] + feature_names].to_dict("records")
+    ]
+    return touches, test_ids
 
 
 def run_benchmark():
-    combined_events, test_ids = build_combined_test_sequence()
-    n_distinct = len(set(combined_events))
-
     model_bundle = joblib.load(MODEL_PATH)
     model = model_bundle["model"]
     feature_names = model_bundle["feature_names"]
 
-    feature_lookup = build_feature_lookup(FEATURES_CSV_PATH, test_ids, feature_names)
+    touches, test_ids = build_combined_test_touches(feature_names)
+    combined_events = [t["item_id"] for t in touches]
+    n_distinct = len(set(combined_events))
 
     print(f"held-out test traces: {len(test_ids)}")
     print(f"combined event sequence: {len(combined_events)} events, {n_distinct} distinct items")
@@ -131,23 +121,21 @@ def run_benchmark():
         lru_hit_rate = run_lru(combined_events, cache_size)
         lfu_hit_rate = run_lfu(combined_events, cache_size)
         belady_hit_rate = run_belady(combined_events, cache_size)
-        predictor_hit_rate = run_predictor(combined_events, cache_size, model, feature_lookup)
+        predictor_hit_rate = run_predictor_dynamic(touches, cache_size, model, feature_names)
 
         label = f"{size_name} ({cache_size}, {fraction:.0%})"
         print(f"{label:<24}{lru_hit_rate:>7.1%} {lfu_hit_rate:>7.1%} {belady_hit_rate:>7.1%} {predictor_hit_rate:>10.1%}")
 
     print()
     print(
-        "NOTE: the predictor policy underperforming LRU/LFU at small/medium cache sizes\n"
-        "is a real result, not a bug -- checked directly (full feature_lookup coverage,\n"
-        "real varied predicted-probability spread, first-occurrence rows verified against\n"
-        "raw features.csv). The likely cause: will_be_reused was defined as reuse WITHIN\n"
-        "one trace's own touch sequence, but each item here gets one static score from its\n"
-        "first occurrence (steps_since_last_seen=-1 by construction at first occurrence)\n"
-        "used across this whole cross-trace CONCATENATED benchmark -- a distributionally\n"
-        "different regime than what the model was trained to predict, and it doesn't\n"
-        "adapt to live cache state the way LRU/LFU inherently do. Worth a follow-up, not\n"
-        "silently patched here."
+        "NOTE: predictor scores are now recomputed on every touch (row_index,\n"
+        "steps_since_last_seen, seconds_since_last_seen live against the combined\n"
+        "sequence), not frozen at first occurrence -- see run_predictor_dynamic's\n"
+        "docstring for exactly what's recomputed live vs. kept as each touch's own\n"
+        "real per-occurrence value, and why (some features, e.g. dag_completion_fraction,\n"
+        "are inherently scoped to one trace's own DAG and have no coherent cross-trace\n"
+        "redefinition). seconds_since_last_seen uses a simulated 1-second-per-touch\n"
+        "clock, matching the abstract discrete-time-step model LRU/LFU/Belady already use."
     )
 
 
