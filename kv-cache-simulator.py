@@ -1,12 +1,14 @@
-''' 
-Step 1: LRU vs LFU cache eviction simulator. 
+'''
+Step 1: LRU vs LFU cache eviction simulator.
 This simulates a fake sequence of "agent events" (each one representing the agent touching some piece of cached context), a small
-fixed-size cache, and 3 eviction policies to compare.
+fixed-size cache, and eviction policies to compare.
 
 The eviction policies are:
 - LRU (Least Recently Used): Evict KV blocks that haven't been recently used.
-- LFU (Least Frequently Used): Evict KV blocks that have been least referred to (usually reference number = 0). 
+- LFU (Least Frequently Used): Evict KV blocks that have been least referred to (usually reference number = 0).
 - Badely Algorithm: This is later incorporated as a baseline for the maximum/best possible hit rate.
+- Predictor (run_predictor, Step 6): evicts using the trained cache-reuse model's predicted
+  probability instead of a recency/frequency heuristic -- see run_predictor's docstring.
 '''
 
 import random
@@ -99,8 +101,44 @@ def run_belady(events, cache_size=CACHE_SIZE):
                 cache.remove(victim)
             cache.add(item)
     return hits / len(events)
- 
- 
+
+
+''' Predictor Algorithm (Step 6): Decides what to evict using the trained
+cache-reuse model's predicted probability, instead of a recency/frequency
+heuristic or Belady's future-lookahead cheat.
+- On each eviction decision, every item currently in the cache is scored via
+  model.predict_proba on its precomputed feature vector (looked up by
+  item_id in feature_lookup, produced by feature_extraction.py from real
+  trace data -- NOT computed live here, since the model's features are
+  historical/trace-derived, not something this simulator's fake events
+  carry).
+- Evicts whichever cached item has the LOWEST predicted reuse probability --
+  the item the model is most confident won't be touched again soon.
+'''
+
+def run_predictor(events, cache_size, model, feature_lookup):
+    cache = set()
+    hits = 0
+    for item in events:
+        if item in cache:
+            hits += 1
+        else:
+            if len(cache) >= cache_size:
+                candidates = list(cache)
+                try:
+                    X = [feature_lookup[c] for c in candidates]
+                except KeyError as e:
+                    raise ValueError(
+                        f"No precomputed features found for cached item {e}; "
+                        "feature_lookup must cover every item_id that can appear in events."
+                    ) from e
+                scores = model.predict_proba(X)[:, 1]  # predicted probability of reuse
+                victim = candidates[int(scores.argmin())]  # evict lowest predicted reuse probability
+                cache.remove(victim)
+            cache.add(item)
+    return hits / len(events)
+
+
 if __name__ == "__main__":
     events = generate_fake_events()
  
