@@ -21,7 +21,7 @@ from frames_data import build_corpus, load_frames_questions
 from orchestrator import orchestrate
 from trace_agent import clear_search_corpus, set_search_corpus
 
-N_QUESTIONS = 70
+N_QUESTIONS = 8
 ERROR_LOG_PATH = "frames_batch_errors.log"
 
 
