@@ -34,3 +34,35 @@ ValueError: Planner did not return valid plan JSON. Raw response:
 }
 
 ----------------------------------------------------------------------
+[2026-08-13T07:43:20.907601+00:00] question 23: 'The actress who played Aunt Rose in A Brooklyn State of Mind (1997) also starred in a mafia movie where she sang a popular Sicilian song. How many years later did her version of the song occur after the earliest recording?'
+Traceback (most recent call last):
+  File "/Users/suhanagrewal/Desktop/documents/career/Projects/improved kv cache/run_frames_batch.py", line 54, in run_frames_batch
+    final_answer = await orchestrate(q["prompt"], trace_log_path=trace_path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/suhanagrewal/Desktop/documents/career/Projects/improved kv cache/orchestrator.py", line 273, in orchestrate
+    plan = plan_task(user_task)
+  File "/Users/suhanagrewal/Desktop/documents/career/Projects/improved kv cache/orchestrator.py", line 120, in plan_task
+    _validate_plan(subtasks)
+    ~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/suhanagrewal/Desktop/documents/career/Projects/improved kv cache/orchestrator.py", line 81, in _validate_plan
+    raise ValueError(
+        f"Sub-task '{st['id']}' depends on unknown id '{dep}'"
+    )
+ValueError: Sub-task 'execute_python_calculate_difference' depends on unknown id 'get_earliest_recording_year'
+
+----------------------------------------------------------------------
+[2026-08-13T10:09:48.515921+00:00] question 105: 'The parish church of Renče, Slovenia, is dedicated to two saints. What would be the tropical zodiac sign of someone born on the date of their annual festival?'
+Traceback (most recent call last):
+  File "/Users/suhanagrewal/Desktop/documents/career/Projects/improved kv cache/run_frames_batch.py", line 54, in run_frames_batch
+    final_answer = await orchestrate(q["prompt"], trace_log_path=trace_path)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/suhanagrewal/Desktop/documents/career/Projects/improved kv cache/orchestrator.py", line 273, in orchestrate
+    plan = plan_task(user_task)
+  File "/Users/suhanagrewal/Desktop/documents/career/Projects/improved kv cache/orchestrator.py", line 120, in plan_task
+    _validate_plan(subtasks)
+    ~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/suhanagrewal/Desktop/documents/career/Projects/improved kv cache/orchestrator.py", line 75, in _validate_plan
+    raise ValueError(f"Plan has duplicate sub-task ids: {ids}")
+ValueError: Plan has duplicate sub-task ids: ['web_search', 'web_search', 'execute_python']
+
+----------------------------------------------------------------------
