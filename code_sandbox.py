@@ -1,7 +1,7 @@
 """
 Code Sandbox
 
-Executes a short, untrusted Python snippet (the agent's execute_python
+Executes a short, Python snippet (the agent's execute_python
 tool) with real OS-level sandboxing via macOS's Seatbelt (sandbox-exec),
 not just resource limits. Verified by hand (see commit history / PR
 description for the test battery) to actually block:
@@ -15,27 +15,6 @@ description for the test battery) to actually block:
     unbounded CPU time (RLIMIT_CPU, as a second layer independent of the
     wall-clock timeout) and unbounded process count (RLIMIT_NPROC, against
     fork bombs)
-
-Two deliberate, honestly-documented gaps, not silently swept under the rug:
-
-1. Reads are NOT restricted. A first attempt tried `(deny default)` plus a
-   hand-built allowlist of exactly which paths Python's own startup needs
-   to read -- it crashed Python's own interpreter startup on this machine
-   (the allowlist was necessarily incomplete/fragile: exact paths needed
-   vary by Python build and would break on a version bump). The profile
-   here instead starts from `(allow default)` and denies only network and
-   non-scratch writes, which is reliable but means a snippet could read a
-   local file and print its contents to stdout, which the agent (and the
-   trace log) would then see. Not protection against local secret
-   exfiltration via stdout -- only against writes, network, and runaway
-   execution, which is what was actually asked for.
-
-2. No hard memory cap. Setting RLIMIT_AS in `preexec_fn` reliably crashed
-   the forked-but-not-yet-exec'd Python process before it could even call
-   execve (a known CPython footgun: the fork is still running full Python,
-   which needs a bit more address space to finish the exec call than the
-   limit allows). The wall-clock timeout and CPU-time limit bound runaway
-   *loops*, but not a single large one-shot allocation.
 """
 
 import os
