@@ -17,11 +17,17 @@ Evaluated two ways:
   than any single split, now that there's enough trace data (100+
   traces) for folds to be meaningful.
 
-TODO(more data):
-- once there are enough predicted-probability buckets with enough rows
-  each, add a calibration reliability check (e.g. a reliability diagram
-  / Brier score by bucket). Skipped for now because that needs more data
-  per bucket than a plain train/test split or k-fold check does.
+Also reports a calibration check: each row's out-of-fold predicted
+probability (from the cross-validation above -- every row gets exactly
+one prediction, made by a model that never trained on it) is bucketed
+into 0.0-0.1, 0.1-0.2, ... 0.9-1.0, and each bucket's actual observed
+will_be_reused rate is compared against the model's own mean predicted
+probability in that bucket. A well-calibrated "70% reuse probability"
+prediction should see roughly 70% of that bucket's rows actually get
+reused -- this check is what tells you whether that's true or whether
+the model's probabilities are just a good *ranking* (which AUC-ROC/PR-AUC
+already confirm) without being meaningfully interpretable as real
+probabilities.
 """
 
 import argparse
@@ -33,7 +39,7 @@ import numpy as np
 import pandas as pd
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import GroupKFold
 
 # unscaled features + lbfgs occasionally hits max_iter without converging;
@@ -98,7 +104,12 @@ def cross_validate(df, feature_names, n_splits=N_CV_SPLITS, random_seed=RANDOM_S
     must never span both the train and validation side of a fold, or that's
     leakage into the validation score.
 
-    fits a fresh baseline + primary model per fold.
+    fits a fresh baseline + primary model per fold. also collects each row's
+    out-of-fold predicted probability (the prediction made on it by the one
+    fold where it was in the validation split, i.e. never trained on) for
+    later use in the calibration check -- rows in a skipped fold (validation
+    split had only one class) are left as NaN, since no valid prediction
+    exists for them.
     """
     X = df[feature_names]
     y = df[TARGET_COLUMN]
@@ -111,6 +122,10 @@ def cross_validate(df, feature_names, n_splits=N_CV_SPLITS, random_seed=RANDOM_S
     results = {
         "logistic regression": {"auc_roc": [], "pr_auc": []},
         PRIMARY_MODEL_NAME: {"auc_roc": [], "pr_auc": []},
+    }
+    oof_probs = {
+        "logistic regression": np.full(len(df), np.nan),
+        PRIMARY_MODEL_NAME: np.full(len(df), np.nan),
     }
 
     for fold_index, (train_idx, val_idx) in enumerate(gkf.split(X, y, groups=groups), start=1):
@@ -126,12 +141,14 @@ def cross_validate(df, feature_names, n_splits=N_CV_SPLITS, random_seed=RANDOM_S
         baseline_scores = baseline_fold.predict_proba(X_val_fold)[:, 1]
         results["logistic regression"]["auc_roc"].append(roc_auc_score(y_val_fold, baseline_scores))
         results["logistic regression"]["pr_auc"].append(average_precision_score(y_val_fold, baseline_scores))
+        oof_probs["logistic regression"][val_idx] = baseline_scores
 
         primary_fold = XGBClassifier(n_estimators=100, max_depth=3, random_state=random_seed, eval_metric="logloss")
         primary_fold.fit(X_train_fold, y_train_fold)
         primary_scores = primary_fold.predict_proba(X_val_fold)[:, 1]
         results[PRIMARY_MODEL_NAME]["auc_roc"].append(roc_auc_score(y_val_fold, primary_scores))
         results[PRIMARY_MODEL_NAME]["pr_auc"].append(average_precision_score(y_val_fold, primary_scores))
+        oof_probs[PRIMARY_MODEL_NAME][val_idx] = primary_scores
 
         print(
             f"  fold {fold_index}/{n_splits}: "
@@ -139,7 +156,7 @@ def cross_validate(df, feature_names, n_splits=N_CV_SPLITS, random_seed=RANDOM_S
             f"{PRIMARY_MODEL_NAME} AUC-ROC={results[PRIMARY_MODEL_NAME]['auc_roc'][-1]:.4f} PR-AUC={results[PRIMARY_MODEL_NAME]['pr_auc'][-1]:.4f}"
         )
 
-    return results
+    return results, oof_probs
 
 
 def _mean_std(values: list) -> str:
@@ -147,6 +164,46 @@ def _mean_std(values: list) -> str:
         return "undefined (no valid folds)"
     arr = np.array(values)
     return f"{arr.mean():.4f} +/- {arr.std():.4f} (n={len(arr)} folds)"
+
+
+N_CALIBRATION_BUCKETS = 10
+
+
+def calibration_table(y_true, y_prob, n_buckets=N_CALIBRATION_BUCKETS):
+    """
+    buckets y_prob into n_buckets equal-width bins (0.0-0.1, 0.1-0.2, ...,
+    0.9-1.0) and reports, per bucket: how many predictions landed there,
+    the model's own mean predicted probability within the bucket, and the
+    actual observed will_be_reused rate within the bucket. empty buckets
+    are included with count=0 rather than skipped, so gaps in coverage
+    (e.g. no predictions above 60%) are visible, not hidden.
+    """
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    bucket_idx = np.minimum((y_prob * n_buckets).astype(int), n_buckets - 1)
+
+    rows = []
+    for b in range(n_buckets):
+        mask = bucket_idx == b
+        count = int(mask.sum())
+        rows.append(
+            {
+                "bucket": f"{b / n_buckets:.1f}-{(b + 1) / n_buckets:.1f}",
+                "count": count,
+                "mean_predicted": float(y_prob[mask].mean()) if count else None,
+                "observed_reuse_rate": float(y_true[mask].mean()) if count else None,
+            }
+        )
+    return rows
+
+
+def print_calibration_table(title: str, rows: list, brier_score: float) -> None:
+    print(f"  {title} (Brier score: {brier_score:.4f}, lower is better -- 0 is perfect)")
+    print(f"    {'bucket':<12}{'count':>8}{'mean predicted':>18}{'observed rate':>16}")
+    for r in rows:
+        mean_pred = f"{r['mean_predicted']:.3f}" if r["mean_predicted"] is not None else "n/a"
+        obs_rate = f"{r['observed_reuse_rate']:.3f}" if r["observed_reuse_rate"] is not None else "n/a"
+        print(f"    {r['bucket']:<12}{r['count']:>8}{mean_pred:>18}{obs_rate:>16}")
 
 
 def main():
@@ -187,7 +244,7 @@ def main():
     joblib.dump({"model": primary, "feature_names": feature_names}, args.model_out)
 
     print(f"\nrunning {N_CV_SPLITS}-fold GroupKFold cross-validation (group=trace_id)...")
-    cv_results = cross_validate(df, feature_names)
+    cv_results, oof_probs = cross_validate(df, feature_names)
 
     print("=" * 70)
     print("PIPELINE CORRECTNESS CHECK -- NOT A REAL RESULT")
@@ -208,6 +265,19 @@ def main():
     print(f"baseline PR-AUC:  {_mean_std(cv_results['logistic regression']['pr_auc'])}")
     print(f"primary  ({PRIMARY_MODEL_NAME}) AUC-ROC: {_mean_std(cv_results[PRIMARY_MODEL_NAME]['auc_roc'])}")
     print(f"primary  ({PRIMARY_MODEL_NAME}) PR-AUC:  {_mean_std(cv_results[PRIMARY_MODEL_NAME]['pr_auc'])}")
+    print(f"--- calibration check (out-of-fold predictions from cross-validation above) ---")
+    y_all = df[TARGET_COLUMN].to_numpy()
+    for model_name in ("logistic regression", PRIMARY_MODEL_NAME):
+        probs = oof_probs[model_name]
+        valid = ~np.isnan(probs)
+        n_missing = int((~valid).sum())
+        missing_note = f" [{n_missing} rows excluded: no out-of-fold prediction, from a skipped fold]" if n_missing else ""
+        if valid.sum() == 0:
+            print(f"  {model_name}: no valid out-of-fold predictions to calibrate against{missing_note}")
+            continue
+        table = calibration_table(y_all[valid], probs[valid])
+        brier = brier_score_loss(y_all[valid], probs[valid])
+        print_calibration_table(f"{model_name}{missing_note}", table, brier)
     print(f"model saved to: {args.model_out}")
     print("=" * 70)
     print(
