@@ -68,11 +68,27 @@ NON_FEATURE_COLUMNS = ID_COLUMNS + ["event_type"]
 MISSING_VALUE_SENTINEL = -1
 
 
+def clean_feature_values(df):
+    """
+    shared cleaning step: bool -> int, and NaN -> MISSING_VALUE_SENTINEL (the
+    same sentinel steps_since_last_seen/seconds_since_last_seen already use
+    for "not applicable"). exposed (not module-private) because
+    run_eviction_benchmark.py's feature_lookup needs this exact same
+    transform applied to features.csv rows before scoring them with the
+    trained model -- model.joblib's model was fit on data cleaned this way,
+    so anything scored later must match, or predict_proba sees a different
+    distribution than training.
+    """
+    df = df.copy()
+    df["is_dependency_of_sink"] = df["is_dependency_of_sink"].astype(int)
+    df = df.fillna(MISSING_VALUE_SENTINEL)
+    return df
+
+
 def load_features(path):
     df = pd.read_csv(path)
     df = df.drop(columns=[c for c in NON_FEATURE_COLUMNS if c in df.columns])
-    df["is_dependency_of_sink"] = df["is_dependency_of_sink"].astype(int)
-    df = df.fillna(MISSING_VALUE_SENTINEL)
+    df = clean_feature_values(df)
     return df
 
 
