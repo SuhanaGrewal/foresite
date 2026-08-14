@@ -353,8 +353,8 @@ specific band on that specific dataset -- a real trade, not hidden, in
 exchange for substantially stronger and more stable behavior everywhere else.
 '''
 
-PRESSURE_WINDOW_MULTIPLIER = 1
-RELATIVE_PRESSURE_THRESHOLD = 0.5
+WORKING_SET_FRACTION = 0.2
+PRESSURE_THRESHOLD = 0.3
 
 
 def run_hybrid(
@@ -362,8 +362,8 @@ def run_hybrid(
     cache_size,
     model,
     feature_names,
-    window_multiplier=PRESSURE_WINDOW_MULTIPLIER,
-    pressure_threshold=RELATIVE_PRESSURE_THRESHOLD,
+    working_set_fraction=WORKING_SET_FRACTION,
+    pressure_threshold=PRESSURE_THRESHOLD,
 ):
     events = [t["item_id"] for t in touches]
     window = cache_size * window_multiplier
