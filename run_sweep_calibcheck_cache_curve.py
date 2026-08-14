@@ -73,3 +73,14 @@ def run_calibcheck_curve():
             f"{label:<16}{lru_hit_rate:>7.1%} {lfu_hit_rate:>7.1%} {belady_hit_rate:>7.1%} "
             f"{predictor_hit_rate:>10.1%} {hybrid_hit_rate:>8.1%} {hybrid_diff:>+10.1%} {pred_diff:>+11.1%}"
         )
+
+    print()
+    print(
+        "Every row reported, favorable or not. If Hyb-LRU goes negative anywhere here,\n"
+        "that means the calibration tuned against features_sweep_holdout.csv did NOT fully\n"
+        "transfer to this genuinely fresh set -- the honest answer either way."
+    )
+
+
+if __name__ == "__main__":
+    run_calibcheck_curve()
