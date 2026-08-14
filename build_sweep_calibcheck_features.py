@@ -19,3 +19,6 @@ if __name__ == "__main__":
     assert all("calibcheck" in p for p in trace_paths), (
         f"glob pattern matched an unexpected path: {[p for p in trace_paths if 'calibcheck' not in p]}"
     )
+
+    df = build_feature_table(trace_paths)
+    df.to_csv(SWEEP_CALIBCHECK_FEATURES_CSV_PATH, index=False)
