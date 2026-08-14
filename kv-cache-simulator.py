@@ -370,6 +370,7 @@ def run_hybrid(
             cache.add(item_id)
 
         last_touched_position[item_id] = i
+        seen_so_far.add(item_id)  # updated AFTER this touch's own decision, so it never sees itself
 
     return hits / len(events)
 
