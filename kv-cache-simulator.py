@@ -294,7 +294,13 @@ def run_hybrid(
     # run_predictor_dynamic, so the predictor half of this hybrid scores
     # identically to the standalone dynamic predictor -- not a separate,
     # possibly-inconsistent reimplementation
-    pass
+    last_seen_position = {}
+    live_rows = []
+    for i, touch in enumerate(touches):
+        item_id = touch["item_id"]
+        steps_since_last_seen = i - last_seen_position[item_id] if item_id in last_seen_position else -1
+        seconds_since_last_seen = float(steps_since_last_seen) if steps_since_last_seen != -1 else -1.0
+        pass
 
 
 if __name__ == "__main__":
