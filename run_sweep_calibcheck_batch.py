@@ -109,3 +109,19 @@ async def run_sweep_calibcheck_batch(max_new: int = None):
         if max_new is not None and newly_run >= max_new:
             print(f"\n=== reached --max-new {max_new}, stopping (rerun this script to continue)")
             break
+
+        if os.path.exists(trace_path):
+            os.remove(trace_path)  # partial/failed leftover
+
+        print(f"\n=== calibcheck task {i}/{len(SWEEP_CALIBCHECK_TASKS)}: {sweep['name']} ({len(sweep['descriptions'])} independent sub-tasks)")
+        newly_run += 1
+
+        try:
+            final_answer = await run_one_sweep_task(sweep, trace_path)
+        except Exception as e:
+            failed += 1
+            _log_failure(sweep["name"], e)
+            if os.path.exists(trace_path):
+                os.remove(trace_path)
+            print(f"    FAILED: {type(e).__name__}: {e}")
+            continue
