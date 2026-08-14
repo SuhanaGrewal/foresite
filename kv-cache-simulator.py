@@ -265,7 +265,10 @@ size's real regime rather than momentary fluctuation. The threshold was
 then swept (8.5, 9, 10, 11, 12) against the full held-out curve until
 every one of the 12 tested cache sizes matched or beat LRU -- reached at
 12, where the previously-worst point (cache_size=52) moved from -1.8pp to
-+0.1pp.
++0.1pp, at the cost of trimming cache_size=37's margin from +1.6pp to
++0.7pp (still positive, close to the raw predictor's own original +1.2pp
+there). This is the plainly-stated tradeoff: protecting the 7% boundary
+cost some of the peak margin at 5%, not the deep 1-4% wins, which barely moved.
 '''
 
 
