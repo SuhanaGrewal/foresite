@@ -1,9 +1,19 @@
 """
 Build Sweep Features
 
-Builds features_sweep.csv from ONLY the sweep traces (traces/run_sweep_*.jsonl),
-via feature_extraction.py's existing build_feature_table() -- no changes to
-feature_extraction.py needed, it already takes an explicit trace-path list.
+Builds features_sweep.csv from ONLY the TRAINING sweep traces
+(traces/run_sweep_N.jsonl), via feature_extraction.py's existing
+build_feature_table() -- no changes to feature_extraction.py needed, it
+already takes an explicit trace-path list.
+
+The glob pattern is traces/run_sweep_[0-9]*.jsonl, NOT traces/run_sweep_*.jsonl:
+the naive `*` pattern also matches traces/run_sweep_holdout_*.jsonl (the
+genuinely held-out evaluation set -- see run_sweep_holdout_batch.py),
+which would silently fold held-out traces into training data. Caught
+this by hand when a rebuild reported "20 traces" instead of the expected
+10 -- worth stating plainly since it's exactly the kind of train/test
+contamination this whole sweep methodology exists to avoid, and it
+happened once already before being caught.
 
 Kept as a separate CSV from the main features.csv, not folded in, for two
 reasons:
@@ -34,7 +44,10 @@ SWEEP_FEATURES_CSV_PATH = "features_sweep.csv"
 
 
 if __name__ == "__main__":
-    trace_paths = sorted(glob.glob("traces/run_sweep_*.jsonl"))
+    trace_paths = sorted(glob.glob("traces/run_sweep_[0-9]*.jsonl"))
+    assert not any("holdout" in p for p in trace_paths), (
+        f"glob pattern accidentally matched a held-out trace: {[p for p in trace_paths if 'holdout' in p]}"
+    )
 
     df = build_feature_table(trace_paths)
     df.to_csv(SWEEP_FEATURES_CSV_PATH, index=False)
