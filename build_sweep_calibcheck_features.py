@@ -12,3 +12,10 @@ import glob
 from feature_extraction import build_feature_table
 
 SWEEP_CALIBCHECK_FEATURES_CSV_PATH = "features_sweep_calibcheck.csv"
+
+
+if __name__ == "__main__":
+    trace_paths = sorted(glob.glob("traces/run_sweep_calibcheck_*.jsonl"))
+    assert all("calibcheck" in p for p in trace_paths), (
+        f"glob pattern matched an unexpected path: {[p for p in trace_paths if 'calibcheck' not in p]}"
+    )
