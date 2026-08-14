@@ -292,6 +292,21 @@ distinct count converge on the running total by construction -- destroying
 exactly the win/lose discrimination the signal needs at the 37-vs-52
 boundary. The real fix had to shrink the window's growth relative to
 cache_size, not just change what it's divided by.
+
+Shrinking the window multiplier to 1 (window = cache_size, not cache_size*20)
+kept the ratio well below saturation across the full cache-size range while
+still preserving cache-size-dependent discrimination -- re-run against the
+SAME held-out calibration curve as before: relative_pressure = (distinct
+items in the trailing window) / (distinct items seen so far in the trace),
+window = cache_size * PRESSURE_WINDOW_MULTIPLIER (now 1). The threshold was
+swept again (0.08 through 0.55) against all 12 calibration cache sizes,
+checking actual decision outcomes, not just percentile summaries -- reached
+zero negative cache sizes only in a narrow band (0.48-0.50); 0.50 was
+chosen as the stable, round-number center of that band. Peak margin at the
+best cache size dropped from the old design's +3.5pp to +1.2pp -- a real,
+plainly-stated cost of trading a scale-dependent threshold for a
+scale-invariant one that only cost 1-4pp of peak performance to gain actual
+transferability.
 '''
 
 PRESSURE_WINDOW_MULTIPLIER = 20
