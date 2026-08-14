@@ -257,6 +257,39 @@ def _compute_agent_depth(agent_id: str, parent_map: dict) -> int:
         current = parent
 
 
+def _compute_sibling_count(parent_map: dict) -> dict:
+    """
+    - sibling_count[agent_id] = how many OTHER agents share this agent's
+      parent_id -- a direct, upfront-known signal for how wide a
+      concurrent fan-out this agent was spawned into. Many siblings
+      (10+) means a sweep-shaped burst of mostly one-off sub-agents;
+      a handful means an ordinary 2-5-subtask plan; zero means a legacy
+      single-agent trace with no concurrent structure at all.
+    - added specifically because event_type_model_call (a structural
+      artifact -- see trace_agent.py's module docstring on
+      trace_to_events()) was found to dominate the trained model's
+      feature importance without transferring to sweep-shaped traces,
+      where sub-agents are short-lived and don't accumulate much
+      growing context. sibling_count gives the model a DIRECT signal
+      for "this looks like a sweep touch" instead of making it infer
+      that indirectly through a feature that doesn't actually carry
+      that meaning.
+    - known entirely from the plan's own spawn structure (parent_map,
+      built from every record including spawn events, before any
+      touches are exploded out), not from anything about how the trace
+      unfolds afterward -- same "known upfront from the plan itself"
+      reasoning agent_depth/fan_out already rely on, so like those two,
+      this needs no backward-looking leakage check (assert_no_leakage
+      already exempts agent_depth/fan_out/is_dependency_of_sink on
+      exactly this basis).
+    """
+    by_parent: dict[str, list] = {}
+    for agent, parent in parent_map.items():
+        by_parent.setdefault(parent, []).append(agent)
+
+    return {agent: len(by_parent[parent]) - 1 for agent, parent in parent_map.items()}
+
+
 def _compute_fan_out_and_sink_deps(depends_on_map: dict) -> tuple[dict, set]:
     """
     - fan_out[raw_id] = how many other agents' depends_on lists name raw_id
@@ -290,6 +323,7 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
     # included, before those get filtered out of the item-touch pipeline
     parent_map, depends_on_map = _build_graph_maps(records)
     fan_out_map, dependency_of_sink = _compute_fan_out_and_sink_deps(depends_on_map)
+    sibling_count_map = _compute_sibling_count(parent_map)
 
     records = _annotate_records(records, depends_on_map)
     touches = _explode_touches(records)
@@ -345,6 +379,7 @@ def build_rows_for_trace(trace_path: str, window: int = REUSE_WINDOW_EVENTS) -> 
             "dag_completion_fraction": t["dag_completion_fraction"],
             "agent_depth": _compute_agent_depth(agent, parent_map),
             "fan_out": fan_out_map.get(raw_agent, 0),
+            "sibling_count": sibling_count_map.get(agent, 0),
             "is_dependency_of_sink": raw_agent in dependency_of_sink,
             "will_be_reused": labels[i],
         }
