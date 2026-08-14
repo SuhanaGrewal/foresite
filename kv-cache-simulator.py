@@ -254,7 +254,11 @@ threshold, not just trusting the aggregate means. At cache_size=52 (the
 worst dip, -5.2pp), 78% of individual decisions still exceeded the
 threshold and used the predictor, because pressure_ratio fluctuates
 heavily moment-to-moment and the per-cache-size mean was a poor summary of
-that.
+that. Checking full percentile distributions (10th/25th/50th/75th/90th)
+across window multipliers showed W=cache_size*5 gives near-total overlap
+between the "predictor wins" (cache_size 7-37) and "predictor loses"
+(cache_size 52-149) zones -- e.g. median pressure_ratio 4.22 at cache_size
+37 vs 4.12 at cache_size 52, statistically indistinguishable.
 '''
 
 
