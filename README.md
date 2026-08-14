@@ -14,11 +14,15 @@ Neither uses any signal about what an agent is actually doing.
 LRU performs near-optimally when the cache is large relative to the working set: there's enough room that eviction decisions barely matter. 
 Its accuracy degrades as cache pressure increases: at small cache sizes (roughly 1–5% relative to distinct items in play), LRU is forced into frequent, consequential eviction, and recency alone becomes a poor predictor of what's needed next.
 
+___
+
 **The core idea**
 
 A system that predicts, for each item touched during an LLM agent's execution trace, whether that item will be reused later and uses that prediction to make smarter KV-cache eviction decisions than plain LRU.
 
 Given the finding that LRU works near-optimally with large cache sizes, the model was built into a hybdird system dynamically switching between the agentic behaviour-based predictor and LRU.
+
+___
 
 **The solution**
 
@@ -52,11 +56,46 @@ _Positional signal_
 _Runtime signal (hybrid policy only, not the base predictor)_
 
 A live cache-pressure measure (cache size relative to recently observed distinct items), used ONLY to decide whether to consult the predictor or LRU.
+___
 
 **What's actually here**
-- A real multi-agent orchestrator (`orchestrator.py`): a planner decomposes a task into a dependency DAG (Directed Acyclic Graph), independent sub-tasks run as concurrent agents (verified via millisecond-level spawn timestamps), and a synthesizer combines results.
-Real local inference (`trace_agent.py`): runs on Ollama locally; every step is logged with real engine-reported timing.
-Real tools: web_search grounded in FRAMES (_a published multi-hop QA dataset_) and real Wikipedia content; a sandboxed Python executor; a constrained SQLite lookup tool.
-A leakage-checked feature extraction pipeline (`feature_extraction.py`): every backward-looking feature is independently re-verified against a structurally future-blind recomputation before being trusted.
-A trained predictor (  train_predictor.py  ): logistic regression baseline + XGBoost; trace-level train/test splitting; GroupKFold cross-validation, calibration checking.
+
+****1. Multi-agent orchestrator** (`orchestrator.py`):**
+**- instead of one AI agent doing a task, this splits a task into smaller sub-tasks and hands them to separate mini-agents
+- a "planner" computes which sub-tasks depend on each other using a dependency map DAG (Directed Acyclic Graph)
+- sub-tasks that don't depend on each other run at the same time via `asynchio`, confirmed by checking real timestamps showing multiple agents starting within milliseconds of each other.
+- a "synthesizer" combines each agents' results into one answer
+
+**Local inference (`trace_agent.py`):** 
+- AI model runs locally on the developer's laptop via Ollama
+- every step is logged with real processing time.
+
+**2. Tools:**
+
+web_search grounded in:
+- FRAMES (a published multi-hop QA dataset)
+- real Wikipedia content
+- a sandboxed Python executor
+- a constrained SQLite lookup tool.
+
+**3.Leakage-checked feature extraction pipeline (`feature_extraction.py`):**
+- turns raw agent logs into a clean table a model can learn from.
+- every piece of information fed to the model is re-verified to ensure it came from before the moment being predicted against a structurally future-blind recomputation before being trusted.
+
+**4. Trained predictor (`train_predictor.py`):** 
+- logistic regression baseline + XGBoost; trace-level train/test splitting; GroupKFold cross-validation, calibration checking.
 A rigorous evaluation harness (`kv-cache-simulator.py`): benchmarks the predictor against LRU, LFU, and Belady's optimal (the theoretical unachievable-in-practice ceiling for the maximum best result) on real, held-out trace data.
+
+- logistic regression: considers each signal, learns a weight for how much that signal pushes the prediction toward "will be reused" or "won't.", adds all weights and compresses the result into a probability between 0 and 1.
+- XGBoost: a powerful model built from small decision trees (a chain of Y/N questions like "was this a model_call? if yes, is fan_out > 2?..."); builds one tree, mines incorrect decisions within that tree; builds a second tree focused on fixing those mistakes;
+result = dozens of trees stacked together with each patching the previous ones' errors.
+- GroupKFold cross-validation: splits real agent traces into groups; trains and tests model each time holding a different group as the test set. If the model performs consistently well across all these different holdouts; hence tests model's reliability
+
+**Rigorous evaluation harness ('kv-cache-simulator.py'):** 
+compares the trained predictor against 3 strategies to decide what to keep in memory:
+- **`LRU:`** keep most recently used information
+- **`LFU`:** keep most frequently used information
+- **Belady's Algorithm:** A theoretical, perfect strategy that can see the complete future (of context reuse); impossible in real life, but useful as a ceiling to measure how close to ideal the predictor is.
+___
+
+**The actual result**
