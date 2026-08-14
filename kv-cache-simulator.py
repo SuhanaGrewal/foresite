@@ -269,7 +269,14 @@ every one of the 12 tested cache sizes matched or beat LRU -- reached at
 +0.7pp (still positive, close to the raw predictor's own original +1.2pp
 there). This is the plainly-stated tradeoff: protecting the 7% boundary
 cost some of the peak margin at 5%, not the deep 1-4% wins, which barely moved.
+
+Above the threshold (high pressure -- many distinct items competing for few
+slots, sweep-like): falls back to run_predictor_dynamic's scoring. At or
+below it (lower pressure): uses LRU's recency-based eviction instead.
 '''
+
+PRESSURE_WINDOW_MULTIPLIER = 20
+PRESSURE_RATIO_THRESHOLD = 12
 
 
 if __name__ == "__main__":
