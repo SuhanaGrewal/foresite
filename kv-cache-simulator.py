@@ -330,6 +330,12 @@ def run_hybrid(
                     victim = min(cache, key=lambda x: current_score[x])  # predictor: lowest predicted reuse probability
                 else:
                     victim = min(cache, key=lambda x: last_touched_position[x])  # LRU fallback: oldest last touch
+                cache.remove(victim)
+            cache.add(item_id)
+
+        last_touched_position[item_id] = i
+
+    return hits / len(events)
 
 
 if __name__ == "__main__":
