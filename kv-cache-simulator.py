@@ -309,8 +309,8 @@ scale-invariant one that only cost 1-4pp of peak performance to gain actual
 transferability.
 '''
 
-PRESSURE_WINDOW_MULTIPLIER = 20
-PRESSURE_RATIO_THRESHOLD = 12
+PRESSURE_WINDOW_MULTIPLIER = 1
+RELATIVE_PRESSURE_THRESHOLD = 0.5
 
 
 def run_hybrid(
@@ -319,7 +319,7 @@ def run_hybrid(
     model,
     feature_names,
     window_multiplier=PRESSURE_WINDOW_MULTIPLIER,
-    pressure_threshold=PRESSURE_RATIO_THRESHOLD,
+    pressure_threshold=RELATIVE_PRESSURE_THRESHOLD,
 ):
     events = [t["item_id"] for t in touches]
     window = cache_size * window_multiplier
