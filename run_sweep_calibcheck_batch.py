@@ -38,3 +38,11 @@ CATALOG_QUERIES_CALIBCHECK = [
     "List every product category in the catalog.",
     "Find in-stock products under $30 in the kitchenware category.",
 ]
+
+WIKIPEDIA_TOPICS_CALIBCHECK = [
+    "the history of the Manhattan Project",
+    "the discovery of tectonic plates",
+    "the causes of the Nika riots",
+    "the history of the Millau Viaduct",
+    "the invention of the stethoscope",
+]
