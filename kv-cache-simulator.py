@@ -273,6 +273,16 @@ cost some of the peak margin at 5%, not the deep 1-4% wins, which barely moved.
 Above the threshold (high pressure -- many distinct items competing for few
 slots, sweep-like): falls back to run_predictor_dynamic's scoring. At or
 below it (lower pressure): uses LRU's recency-based eviction instead.
+
+SCALE-DEPENDENCE FIX (found via a third, genuinely fresh calibcheck set):
+PRESSURE_RATIO_THRESHOLD=12 was an ABSOLUTE distinct-item count, tuned to
+the calibration set's 746-item universe. On a smaller dataset (151 items),
+the trailing window could never accumulate 12x cache_size distinct items --
+that count simply didn't exist in the dataset -- so predictor mode never
+triggered in the 7-20% band, leaving real available advantage (verified up
+to +11.2pp at one cache size) unclaimed even though the safety property
+(never worse than LRU) still held. Fixed below by making the threshold a
+TRUE PERCENTAGE, relative to distinct items seen so far in the trace.
 '''
 
 PRESSURE_WINDOW_MULTIPLIER = 20
