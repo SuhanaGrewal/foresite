@@ -133,3 +133,10 @@ async def run_sweep_calibcheck_batch(max_new: int = None):
     print(f"\n=== calibcheck batch invocation complete: {succeeded} succeeded, {failed} failed this run ===")
     if failed:
         print(f"    see {ERROR_LOG_PATH} for failure details")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--max-new", type=int, default=None, help="run at most this many NOT-yet-completed tasks, then stop")
+    args = parser.parse_args()
+    asyncio.run(run_sweep_calibcheck_batch(max_new=args.max_new))
