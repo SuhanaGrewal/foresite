@@ -321,6 +321,10 @@ def run_hybrid(
 
         if item_id in cache:
             hits += 1
+        else:
+            if len(cache) >= cache_size:
+                recent_window = events[max(0, i - window) : i]
+                pressure_ratio = len(set(recent_window)) / cache_size
 
 
 if __name__ == "__main__":
