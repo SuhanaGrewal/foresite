@@ -52,3 +52,15 @@ def run_calibcheck_curve():
     )
     print(header)
     print("-" * len(header))
+
+    for fraction in CACHE_FRACTIONS:
+        cache_size = max(1, round(fraction * n_distinct))
+
+        lru_hit_rate = run_lru(combined_events, cache_size)
+        lfu_hit_rate = run_lfu(combined_events, cache_size)
+        belady_hit_rate = run_belady(combined_events, cache_size)
+        predictor_hit_rate = run_predictor_dynamic(touches, cache_size, model, feature_names)
+        # NOTE: run_hybrid called with its default constants -- no window_multiplier
+        # or pressure_threshold override -- these are the exact same values
+        # calibrated against features_sweep_holdout.csv, unchanged
+        hybrid_hit_rate = run_hybrid(touches, cache_size, model, feature_names)
