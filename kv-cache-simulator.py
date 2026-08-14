@@ -359,9 +359,10 @@ def run_hybrid(
         else:
             if len(cache) >= cache_size:
                 recent_window = events[max(0, i - window) : i]
-                pressure_ratio = len(set(recent_window)) / cache_size
+                distinct_in_window = len(set(recent_window))
+                relative_pressure = distinct_in_window / max(len(seen_so_far), 1)
 
-                if pressure_ratio >= pressure_threshold:
+                if relative_pressure >= pressure_threshold:
                     victim = min(cache, key=lambda x: current_score[x])  # predictor: lowest predicted reuse probability
                 else:
                     victim = min(cache, key=lambda x: last_touched_position[x])  # LRU fallback: oldest last touch
