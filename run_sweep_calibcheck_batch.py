@@ -53,3 +53,15 @@ WIKIPEDIA_TOPICS_CALIBCHECK = [
 ]
 
 MIXED_WEATHER_CALIBCHECK = ["Vladivostok", "Ulaanbaatar", "Yerevan", "Tallinn"]
+MIXED_CATALOG_CALIBCHECK = [
+    "Find products under $50 in the toys category.",
+    "Find products under $12 in the books category.",
+]
+MIXED_WIKI_CALIBCHECK = [
+    "the history of the Vasa warship",
+    "the discovery of the Dead Sea Scrolls",
+]
+MIXED_PYTHON_CALIBCHECK = [
+    "Use the code execution tool to calculate the sum of the first 20 even numbers.",
+    "Use the code execution tool to calculate 18 percent of 640.",
+]
