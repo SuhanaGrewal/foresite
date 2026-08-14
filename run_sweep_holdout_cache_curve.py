@@ -29,6 +29,7 @@ _kv_sim_spec = importlib.util.spec_from_file_location("kv_cache_simulator", "kv-
 _kv_cache_simulator = importlib.util.module_from_spec(_kv_sim_spec)
 _kv_sim_spec.loader.exec_module(_kv_cache_simulator)
 run_predictor_dynamic = _kv_cache_simulator.run_predictor_dynamic
+run_hybrid = _kv_cache_simulator.run_hybrid
 
 # fine-grained grid, including points below the standard "small" (5%) to
 # see whether the predictor's edge grows as cache pressure tightens further
