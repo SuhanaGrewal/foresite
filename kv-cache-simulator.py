@@ -318,6 +318,24 @@ predictor's real advantage at 1-2% cache, not a modest trim. The threshold
 suppressed genuinely-correct predictor triggering at the smallest cache
 sizes, where the window (cache_size*1, e.g. just 7 touches at cache_size=7)
 was too short and noisy to reliably clear it.
+
+WORKING-SET-RATIO REDESIGN: replaced the cache_size-scaled window with a
+window sized as a fraction of the TRACE'S OWN ELAPSED POSITION
+(WORKING_SET_FRACTION * i, genuinely independent of cache_size), used to
+estimate a "recent working set size" -- how many distinct items the
+workload has actually been touching lately, regardless of any particular
+cache_size. The signal compared is then cache_size / working_set_size
+directly: a LOW ratio means the cache holds only a small fraction of the
+recent working set (high pressure, use the predictor); a ratio near or
+above 1 means the cache comfortably covers what's been active (low
+pressure, use LRU). This cleanly separates "how diverse is the recent
+workload" (independent of cache_size) from "does my cache cover that
+diversity" (the actual cache_size-dependent question), avoiding both
+failure modes above: percentile checks showed a smooth, monotonically
+increasing ratio across the full cache-size range with NO saturation
+(unlike the distinct-so-far designs), so a single threshold could
+discriminate the whole curve without sacrificing signal quality at any
+one end.
 '''
 
 PRESSURE_WINDOW_MULTIPLIER = 1
