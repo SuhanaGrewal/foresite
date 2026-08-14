@@ -33,4 +33,8 @@ CATALOG_QUERIES_CALIBCHECK = [
     "Get product details for product id 15.",
     "Find products under $18 in the beauty category.",
     "Find products under $65 in the electronics category.",
+    "Find products with a rating above 4.6.",
+    "Find products with fewer than 20 units in stock.",
+    "List every product category in the catalog.",
+    "Find in-stock products under $30 in the kitchenware category.",
 ]
