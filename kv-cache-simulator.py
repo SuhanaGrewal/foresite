@@ -350,6 +350,7 @@ def run_hybrid(
     hits = 0
     current_score = {}
     last_touched_position = {}  # item_id -> most recent index touched, for the LRU fallback
+    seen_so_far = set()  # every distinct item_id touched up to (not including) position i
     for i, item_id in enumerate(events):
         current_score[item_id] = scores[i]
 
