@@ -229,6 +229,13 @@ run_hybrid switches between the two per eviction decision, based on a LIVE,
 causal pressure signal -- not the benchmark's own known cache_size/n_distinct
 label, which a real running cache could never observe (it requires knowing
 every distinct item across the WHOLE FUTURE sequence).
+
+Live signal: pressure_ratio = (distinct items in the trailing W touches) /
+cache_size, where W = cache_size * PRESSURE_WINDOW_MULTIPLIER. This is a
+working-set-style local measurement (the same idea real OSes have long used
+for memory-pressure detection), fully causal -- only ever looks at
+events[max(0, i-W) : i], strictly before the current position, same rule
+every other feature in this project follows.
 '''
 
 
