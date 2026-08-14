@@ -98,3 +98,14 @@ async def run_sweep_calibcheck_batch(max_new: int = None):
     succeeded = 0
     failed = 0
     newly_run = 0
+
+    for i, sweep in enumerate(SWEEP_CALIBCHECK_TASKS, start=1):
+        trace_path = f"{TRACES_DIR}/run_sweep_calibcheck_{i}.jsonl"
+
+        if _trace_is_complete(trace_path):
+            print(f"\n=== calibcheck task {i}/{len(SWEEP_CALIBCHECK_TASKS)}: {sweep['name']} -- already complete, skipping")
+            continue
+
+        if max_new is not None and newly_run >= max_new:
+            print(f"\n=== reached --max-new {max_new}, stopping (rerun this script to continue)")
+            break
