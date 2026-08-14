@@ -316,6 +316,11 @@ def run_hybrid(
     hits = 0
     current_score = {}
     last_touched_position = {}  # item_id -> most recent index touched, for the LRU fallback
+    for i, item_id in enumerate(events):
+        current_score[item_id] = scores[i]
+
+        if item_id in cache:
+            hits += 1
 
 
 if __name__ == "__main__":
