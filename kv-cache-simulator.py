@@ -312,6 +312,11 @@ def run_hybrid(
     X = [[row[name] for name in feature_names] for row in live_rows]
     scores = model.predict_proba(X)[:, 1]
 
+    cache = set()
+    hits = 0
+    current_score = {}
+    last_touched_position = {}  # item_id -> most recent index touched, for the LRU fallback
+
 
 if __name__ == "__main__":
     events = generate_fake_events()
