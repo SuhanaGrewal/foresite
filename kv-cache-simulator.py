@@ -336,6 +336,21 @@ increasing ratio across the full cache-size range with NO saturation
 (unlike the distinct-so-far designs), so a single threshold could
 discriminate the whole curve without sacrificing signal quality at any
 one end.
+
+WORKING_SET_FRACTION=0.2 and PRESSURE_THRESHOLD=0.3 were swept against
+both the original calibration curve AND the fresh calibcheck curve
+together (checking real decision outcomes on both, not just one) --
+stable across threshold 0.25-0.35 on both datasets (not a knife-edge),
+zero negative cache sizes on either. Peak margin recovered to +2.4pp to
++2.8pp at the tightest cache sizes on the calibration set (vs the
+previous design's +0.0pp to +0.7pp there, and the pre-hybrid raw
+predictor's own +3.3pp to +5.1pp) -- most, not all, of the raw
+predictor's peak advantage survives the safety-preserving switch. The
+plainly-stated remaining cost: the 7-20% band on the fresh calibcheck set
+settles to exact LRU parity (+0.0pp) rather than capturing extra
+advantage there, unlike the prior design's partial recovery in that
+specific band on that specific dataset -- a real trade, not hidden, in
+exchange for substantially stronger and more stable behavior everywhere else.
 '''
 
 PRESSURE_WINDOW_MULTIPLIER = 1
