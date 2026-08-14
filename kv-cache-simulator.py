@@ -393,7 +393,6 @@ def run_hybrid(
     hits = 0
     current_score = {}
     last_touched_position = {}  # item_id -> most recent index touched, for the LRU fallback
-    seen_so_far = set()  # every distinct item_id touched up to (not including) position i
     for i, item_id in enumerate(events):
         current_score[item_id] = scores[i]
 
@@ -401,11 +400,17 @@ def run_hybrid(
             hits += 1
         else:
             if len(cache) >= cache_size:
-                recent_window = events[max(0, i - window) : i]
-                distinct_in_window = len(set(recent_window))
-                relative_pressure = distinct_in_window / max(len(seen_so_far), 1)
+                # working set: distinct items touched in a window sized as a
+                # FRACTION OF THE TRACE'S OWN ELAPSED POSITION, independent of
+                # cache_size -- see docstring for why this avoids the
+                # saturation and scale-dependence failure modes of the two
+                # earlier designs
+                ws_window_size = max(1, int(working_set_fraction * i))
+                working_set = events[max(0, i - ws_window_size) : i]
+                working_set_size = len(set(working_set))
+                pressure = cache_size / max(working_set_size, 1)
 
-                if relative_pressure >= pressure_threshold:
+                if pressure <= pressure_threshold:  # LOW ratio: cache is small relative to the working set
                     victim = min(cache, key=lambda x: current_score[x])  # predictor: lowest predicted reuse probability
                 else:
                     victim = min(cache, key=lambda x: last_touched_position[x])  # LRU fallback: oldest last touch
@@ -413,7 +418,6 @@ def run_hybrid(
             cache.add(item_id)
 
         last_touched_position[item_id] = i
-        seen_so_far.add(item_id)  # updated AFTER this touch's own decision, so it never sees itself
 
     return hits / len(events)
 
