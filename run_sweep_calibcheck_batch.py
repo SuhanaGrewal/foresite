@@ -23,3 +23,14 @@ from run_sweep_batch import (
     _weather_descriptions,
     run_one_sweep_task,
 )
+
+# uses product ids 7/11/13/15, the only ones not already queried across
+# run_sweep_batch.py's and run_sweep_holdout_batch.py's catalog tasks
+CATALOG_QUERIES_CALIBCHECK = [
+    "Get product details for product id 7.",
+    "Get product details for product id 11.",
+    "Get product details for product id 13.",
+    "Get product details for product id 15.",
+    "Find products under $18 in the beauty category.",
+    "Find products under $65 in the electronics category.",
+]
