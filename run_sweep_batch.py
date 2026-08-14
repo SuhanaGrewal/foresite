@@ -27,9 +27,21 @@ synthesize() are called directly instead: same real machinery (real
 concurrent sub-agents, real tool calls, real local model, real trace
 logging), minus the LLM planning step.
 
+Scoped down to 3 sweep tasks (54 sub-agent runs total), not the original
+6 (110 runs): 110 real sub-agent runs against qwen2.5:7b proved too heavy
+for this laptop. Kept the three tasks that best isolate different sweep
+flavors -- catalog_sweep (one tool, many targets), wikipedia_sweep (one
+tool, many unrelated topics), mixed_sweep (all four tools) -- still
+genuinely wide-fanout and structurally distinct from each other, just
+less total load. Also runs on qwen2.5:1.5b instead of trace_agent.py's
+committed 7b default: this test is about the ACCESS PATTERN (many
+one-off touches vs. a few reused ones), not model reasoning quality, so
+the smaller/faster model doesn't compromise what's being measured here
+(7b was chosen in trace_agent.py for reliable multi-step reasoning,
+which isn't what sweep sub-tasks -- single simple lookups each -- need).
+
 Traces are written to traces/run_sweep_N.jsonl, kept separate from the
-general batch/FRAMES traces. See build_sweep_features.py for why they're
-folded into a separate features_sweep.csv rather than the main features.csv.
+general batch/FRAMES traces.
 """
 
 import asyncio
@@ -37,12 +49,13 @@ import os
 import traceback
 from datetime import datetime, timezone
 
-from frames_data import build_corpus
+import trace_agent
 from orchestrator import dispatch_subtasks, synthesize
-from trace_agent import clear_search_corpus, set_search_corpus
 
 TRACES_DIR = "traces"
 ERROR_LOG_PATH = "sweep_batch_errors.log"
+
+trace_agent.MODEL = "qwen2.5:1.5b"
 
 
 def _independent_subtasks(descriptions: list) -> list:
@@ -50,13 +63,7 @@ def _independent_subtasks(descriptions: list) -> list:
     return [{"id": f"lookup_{i}", "description": desc, "depends_on": []} for i, desc in enumerate(descriptions)]
 
 
-WEATHER_CITIES = [
-    "Accra", "Casablanca", "Istanbul", "Bangkok", "Jakarta", "Manila",
-    "Seoul", "Osaka", "Mumbai", "Karachi", "Tehran", "Riyadh", "Dubai",
-    "Athens", "Lisbon", "Warsaw", "Bucharest", "Helsinki", "Bogota", "Perth",
-]
-
-CATALOG_QUERIES_1 = [
+CATALOG_QUERIES = [
     "Search the product catalog for 'headphones' and report price and stock.",
     "Search the product catalog for 'monitor' and report price and stock.",
     "Search the product catalog for 'keyboard' and report price and stock.",
@@ -77,7 +84,7 @@ CATALOG_QUERIES_1 = [
     "Find the highest-rated product in the electronics category.",
 ]
 
-WIKIPEDIA_TOPICS_1 = [
+WIKIPEDIA_TOPICS = [
     "the history of the printing press",
     "the discovery of penicillin",
     "the causes of the French Revolution",
@@ -118,94 +125,17 @@ MIXED_PYTHON_TASKS = [
     "Use the code execution tool to calculate 15 percent of 240.",
 ]
 
-CATALOG_QUERIES_2 = [
-    "Search the product catalog for 'wireless' and report price and stock.",
-    "Search the product catalog for '4K' and report price and stock.",
-    "Search the product catalog for 'mechanical' and report price and stock.",
-    "Find products under $15 in the beauty category.",
-    "Find products under $20 in the kitchenware category.",
-    "Find the highest-rated product in the books category.",
-    "Find the highest-rated product in the office_supplies category.",
-    "Search the product catalog for 'bluetooth' and report price and stock.",
-    "Search the product catalog for 'iron' and report price and stock.",
-    "Search the product catalog for 'vitamin' and report price and stock.",
-]
-
-WIKIPEDIA_TOPICS_2 = [
-    "the history of chess",
-    "the invention of the light bulb",
-    "the causes of the Cold War",
-    "the history of the Berlin Wall",
-    "the discovery of Pluto",
-    "the history of the Ottoman Empire",
-    "the invention of the steam engine",
-    "the causes of the American Revolution",
-    "the history of the Colosseum",
-    "the discovery of the periodic table",
-]
-
-# a real FRAMES question (google/frames-benchmark) -- the highest gold-document
-# count found across the dataset (11 real Wikipedia sources; one malformed
-# entry in the raw dataset combining two URLs was split and its fragment
-# anchor dropped). Hardcoded rather than re-selected at runtime, so this
-# sweep task is reproducible regardless of the dataset's own shuffling.
-FRAMES_SWEEP_QUESTION = {
-    "prompt": "Who had the best career batting average out of every player to hit a home run in the 2002 World Series matchup between the Anaheim Angeles and San Francisco Giants?",
-    "answer": "Barry Bonds with a .298 lifetime batting average.",
-    "wiki_links": [
-        "https://en.wikipedia.org/wiki/2002_World_Series",
-        "https://en.wikipedia.org/wiki/Barry_Bonds",
-        "https://en.wikipedia.org/wiki/Darin_Erstad",
-        "https://en.wikipedia.org/wiki/David_Bell_(baseball)",
-        "https://en.wikipedia.org/wiki/Jeff_Kent",
-        "https://en.wikipedia.org/wiki/J._T._Snow",
-        "https://en.wikipedia.org/wiki/Reggie_Sanders",
-        "https://en.wikipedia.org/wiki/Rich_Aurilia",
-        "https://en.wikipedia.org/wiki/Scott_Spiezio",
-        "https://en.wikipedia.org/wiki/Shawon_Dunston",
-        "https://en.wikipedia.org/wiki/Tim_Salmon",
-        "https://en.wikipedia.org/wiki/Troy_Glaus",
-    ],
-}
-
-FRAMES_SWEEP_TOPICS = [
-    "Look up information about the 2002 World Series and report a brief summary.",
-    "Look up information about Barry Bonds and report his career batting average.",
-    "Look up information about Darin Erstad and report his career batting average.",
-    "Look up information about David Bell (baseball) and report his career batting average.",
-    "Look up information about Jeff Kent and report his career batting average.",
-    "Look up information about J. T. Snow and report his career batting average.",
-    "Look up information about Reggie Sanders and report his career batting average.",
-    "Look up information about Rich Aurilia and report his career batting average.",
-    "Look up information about Scott Spiezio and report his career batting average.",
-    "Look up information about Shawon Dunston and report his career batting average.",
-    "Look up information about Tim Salmon and report his career batting average.",
-    "Look up information about Troy Glaus and report his career batting average.",
-    "Look up information about the history of the World Series and report a brief summary.",
-    "Look up information about the Anaheim Angels franchise history.",
-    "Look up information about the San Francisco Giants franchise history.",
-    "Look up information about career batting average as a baseball statistic.",
-]
-
 
 SWEEP_TASKS = [
     {
-        "name": "weather_sweep",
-        "user_task": "Check the current weather across 20 different cities around the world and report a summary.",
-        "descriptions": [f"Get the current weather for {city}." for city in WEATHER_CITIES],
-        "frames_question": None,
-    },
-    {
         "name": "catalog_sweep",
         "user_task": "Look up 18 different items and categories in the product catalog and report a summary of prices, stock, and ratings.",
-        "descriptions": CATALOG_QUERIES_1,
-        "frames_question": None,
+        "descriptions": CATALOG_QUERIES,
     },
     {
         "name": "wikipedia_sweep",
         "user_task": "Research 18 different, unrelated general-knowledge topics and report a brief summary of each.",
-        "descriptions": [f"Search the web for {topic} and report a brief summary." for topic in WIKIPEDIA_TOPICS_1],
-        "frames_question": None,
+        "descriptions": [f"Search the web for {topic} and report a brief summary." for topic in WIKIPEDIA_TOPICS],
     },
     {
         "name": "mixed_sweep",
@@ -216,24 +146,6 @@ SWEEP_TASKS = [
             + [f"Search the web for {topic} and report a brief summary." for topic in MIXED_WIKIPEDIA_TOPICS]
             + MIXED_PYTHON_TASKS
         ),
-        "frames_question": None,
-    },
-    {
-        "name": "frames_multihop_sweep",
-        "user_task": (
-            "Research every player who hit a home run in the 2002 World Series matchup between the "
-            "Angels and Giants, plus related background, to determine who had the best career batting average."
-        ),
-        "descriptions": FRAMES_SWEEP_TOPICS,
-        "frames_question": FRAMES_SWEEP_QUESTION,
-    },
-    {
-        "name": "large_catalog_and_wiki_sweep",
-        "user_task": "Look up 10 different product catalog queries and research 10 different, unrelated general-knowledge topics, and report a summary.",
-        "descriptions": (
-            CATALOG_QUERIES_2 + [f"Search the web for {topic} and report a brief summary." for topic in WIKIPEDIA_TOPICS_2]
-        ),
-        "frames_question": None,
     },
 ]
 
@@ -247,20 +159,8 @@ def _log_failure(name: str, error: Exception) -> None:
 
 async def run_one_sweep_task(sweep: dict, trace_path: str):
     subtasks = _independent_subtasks(sweep["descriptions"])
-
-    if sweep["frames_question"] is not None:
-        corpus = build_corpus(sweep["frames_question"])
-        print(f"    fetched {len(corpus)}/{len(sweep['frames_question']['wiki_links'])} gold documents")
-        set_search_corpus(corpus)
-
-    try:
-        results = await dispatch_subtasks(subtasks, trace_log_path=trace_path)
-        final_answer = synthesize(sweep["user_task"], subtasks, results, trace_log_path=trace_path)
-    finally:
-        if sweep["frames_question"] is not None:
-            clear_search_corpus()
-
-    return final_answer
+    results = await dispatch_subtasks(subtasks, trace_log_path=trace_path)
+    return synthesize(sweep["user_task"], subtasks, results, trace_log_path=trace_path)
 
 
 async def run_sweep_batch():
