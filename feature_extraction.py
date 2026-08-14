@@ -455,7 +455,17 @@ def build_feature_table(trace_paths: list[str], window: int = REUSE_WINDOW_EVENT
 
 
 if __name__ == "__main__":
-    trace_paths = sorted(glob.glob("traces/run_*.jsonl"))
+    # excludes traces/run_sweep_*.jsonl and traces/run_sweep_holdout_*.jsonl:
+    # both match the naive "run_*.jsonl" glob too, and folding either into
+    # the general features.csv would contaminate it -- the sweep traces are
+    # a deliberately separate stress-test dataset (see build_sweep_features.py
+    # and build_sweep_holdout_features.py), kept out of the general dataset
+    # on purpose. this glob previously WAS naive ("run_*.jsonl") and got
+    # caught only because build_sweep_features.py's identical bug was
+    # caught first (a rebuild there reported 20 traces instead of 10) --
+    # fixed here defensively before it could do the same silently to
+    # features.csv, which has no similar row-count sanity check today.
+    trace_paths = sorted(p for p in glob.glob("traces/run_*.jsonl") if "sweep" not in p)
 
     df = build_feature_table(trace_paths)
     df.to_csv("features.csv", index=False)
