@@ -309,6 +309,9 @@ def run_hybrid(
 
         last_seen_position[item_id] = i
 
+    X = [[row[name] for name in feature_names] for row in live_rows]
+    scores = model.predict_proba(X)[:, 1]
+
 
 if __name__ == "__main__":
     events = generate_fake_events()
