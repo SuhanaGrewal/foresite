@@ -300,6 +300,12 @@ def run_hybrid(
         item_id = touch["item_id"]
         steps_since_last_seen = i - last_seen_position[item_id] if item_id in last_seen_position else -1
         seconds_since_last_seen = float(steps_since_last_seen) if steps_since_last_seen != -1 else -1.0
+
+        row = dict(touch["static_features"])
+        row["row_index"] = i
+        row["steps_since_last_seen"] = steps_since_last_seen
+        row["seconds_since_last_seen"] = seconds_since_last_seen
+        live_rows.append(row)
         pass
 
 
