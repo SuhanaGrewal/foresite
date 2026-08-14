@@ -283,6 +283,15 @@ triggered in the 7-20% band, leaving real available advantage (verified up
 to +11.2pp at one cache size) unclaimed even though the safety property
 (never worse than LRU) still held. Fixed below by making the threshold a
 TRUE PERCENTAGE, relative to distinct items seen so far in the trace.
+
+A first fix attempt divided distinct-items-in-window directly by distinct-
+items-seen-so-far, keeping the OLD window size (cache_size*20). That
+saturated to ~1.0 almost everywhere by cache_size=37, because a window that
+large quickly comes to encompass nearly the whole trace, making the window's
+distinct count converge on the running total by construction -- destroying
+exactly the win/lose discrimination the signal needs at the 37-vs-52
+boundary. The real fix had to shrink the window's growth relative to
+cache_size, not just change what it's divided by.
 '''
 
 PRESSURE_WINDOW_MULTIPLIER = 20
