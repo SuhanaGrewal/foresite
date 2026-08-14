@@ -77,10 +77,9 @@ def run_cache_curve():
 
     print()
     print(
-        "'headroom left' = Belady - LRU: the maximum any policy (including a hypothetically\n"
-        "perfect one) could add over LRU at that cache size, in THIS dataset. Where headroom\n"
-        "is small, no real predictor can show a large gap without the measurement being wrong --\n"
-        "reported here in full, not filtered to favorable rows."
+        "'Hyb - LRU' / 'Pred - LRU': hybrid's and the raw predictor's hit rate minus LRU's, at\n"
+        "that cache size. Every row is reported, not filtered to favorable ones -- if the hybrid\n"
+        "still underperforms LRU anywhere, that shows up here rather than being hidden."
     )
 
 
