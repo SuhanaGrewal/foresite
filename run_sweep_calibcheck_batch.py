@@ -12,6 +12,7 @@ calibration fit to that one dataset's particular characteristics?
 
 import argparse
 import asyncio
+import os
 
 from run_sweep_batch import (
     ERROR_LOG_PATH,
@@ -88,3 +89,12 @@ SWEEP_CALIBCHECK_TASKS = [
         ),
     },
 ]
+
+
+async def run_sweep_calibcheck_batch(max_new: int = None):
+    """idempotent + resumable, same pattern as run_sweep_holdout_batch.py -- skips
+    any trace file that already completed, accepts --max-new for small batches."""
+    os.makedirs(TRACES_DIR, exist_ok=True)
+    succeeded = 0
+    failed = 0
+    newly_run = 0
