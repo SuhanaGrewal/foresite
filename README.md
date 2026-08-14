@@ -61,7 +61,7 @@ ___
 ****1. Multi-agent orchestrator** (`orchestrator.py`):**
 **- instead of one AI agent doing a task, this splits a task into smaller sub-tasks and hands them to separate mini-agents
 - a "planner" computes which sub-tasks depend on each other using a dependency map DAG (Directed Acyclic Graph)
-- sub-tasks that don't depend on each other run at the same time via `asynchio`, confirmed by checking real timestamps showing multiple agents starting within milliseconds of each other.
+- sub-tasks that don't depend on each other run at the same time via `asyncio`, confirmed by checking real timestamps showing multiple agents starting within milliseconds of each other.
 - a "synthesizer" combines each agents' results into one answer
 
 **2. Local inference (`trace_agent.py`):** 
@@ -96,6 +96,40 @@ ___
 `hit_rate` is calculated: the % of real reuse opportunities the policy actually captured before eviction, out of the max possible (Belady's optimal).
 ___
 **The actual result**
+
+**Original calibration dataset (746 items; 10 traces)** (All results in hit rate % points)
+┌────────────┬────────────┬────────────┬─────────────┬───────────┬────────────────────────────────────┐
+│ Cache size │    LRU     │ Predictor  │   Hybrid    │ Hyb - LRU │             Pred − LRU             │
+├────────────┼────────────┼────────────┼─────────────┼───────────┼────────────────────────────────────┤
+│ 1%         │ 1.6%       │ 4.8%       │ 4.0%        │ +2.4%     │ +3.2%                              │
+├────────────┼────────────┼────────────┼─────────────┼───────────┼────────────────────────────────────┤
+│ 2%         │ 3.6%       │ 6.8%       │ 6.0%        │ +2.3%     │ +3.2%                              │
+├────────────┼────────────┼────────────┼─────────────┼───────────┼────────────────────────────────────┤
+│ 3%         │ 3.9%       │ 9.0%       │ 6.5%        │ +2.6%     │ +5.1%                              │
+├────────────┼────────────┼────────────┼─────────────┼───────────┼────────────────────────────────────┤
+│ 4%         │ 6.6%       │ 10.1%      │ 8.8%        │ +2.2%     │ +3.5%                              │
+├────────────┼────────────┼────────────┼─────────────┼───────────┼────────────────────────────────────┤
+│ 5%         │ 10.6%      │ 11.9%      │ 11.2%       │ +0.5%     │ +1.3%                              │
+├────────────┼────────────┼────────────┼─────────────┼───────────┼────────────────────────────────────┤
+│ 7-50%      │ 18.7-20.5% │ 13.5-20.4% │ matches LRU │ +0.0%     │ (predictor alone often worse here) │
+└────────────┴────────────┴────────────┴─────────────┴───────────┴────────────────────────────────────┘
+
+**Fresh generalization dataset (151 items; 3 traces; never used incalibration)** (All results in hit rate % points)
+┌────────────┬───────────┬───────────┬─────────────┬───────────┬─────────────────────────────────────────────────────────┐
+│ Cache size │    LRU    │ Predictor │   Hybrid    │ Hyb - LRU │                       Pred − LRU                        │
+├────────────┼───────────┼───────────┼─────────────┼───────────┼─────────────────────────────────────────────────────────┤
+│ 1%         │ 0.0%      │ 0.0%      │ 1.1%        │ +1.1%     │ +0.0%                                                   │
+├────────────┼───────────┼───────────┼─────────────┼───────────┼─────────────────────────────────────────────────────────┤
+│ 2%         │ 0.0%      │ 1.6%      │ 1.6%        │ +1.6%     │ +1.6%                                                   │
+├────────────┼───────────┼───────────┼─────────────┼───────────┼─────────────────────────────────────────────────────────┤
+│ 3%         │ 1.1%      │ 3.2%      │ 3.2%        │ +2.1%     │ +2.1%                                                   │
+├────────────┼───────────┼───────────┼─────────────┼───────────┼─────────────────────────────────────────────────────────┤
+│ 4%         │ 1.1%      │ 4.3%      │ 3.2%        │ +2.1%     │ +3.2%                                                   │
+├────────────┼───────────┼───────────┼─────────────┼───────────┼─────────────────────────────────────────────────────────┤
+│ 5%         │ 1.1%      │ 4.8%      │ 4.3%        │ +3.2%     │ +3.7%                                                   │
+├────────────┼───────────┼───────────┼─────────────┼───────────┼─────────────────────────────────────────────────────────┤
+│ 7-50%      │ 1.1-18.6% │ 6.4-19.7% │ matches LRU │ +0.0%     │ (predictor alone often worse or better, inconsistently) │
+└────────────┴───────────┴───────────┴─────────────┴───────────┴─────────────────────────────────────────────────────────┘
 
 **1. Normal, short multi-agent tasks:** LRU already performs close to Belady's theoretical optimum; there's little room for any policy to improve on it.
 
