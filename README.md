@@ -92,6 +92,7 @@ compares the trained predictor against 3 strategies to decide what to keep in me
 - **Belady's Algorithm:** A theoretical, perfect strategy that can see the complete future (of context reuse); impossible in real life, but useful as a ceiling to measure how close to ideal the predictor is.
 ___
 **How are results measured**
+
 `hit_rate` is calculated: the % of real reuse opportunities the policy actually captured before eviction, out of the max possible (Belady's optimal).
 ___
 **The actual result**
