@@ -51,3 +51,5 @@ WIKIPEDIA_TOPICS_CALIBCHECK = [
     "the causes of the Second Congo War",
     "the history of the Krakatoa eruption",
 ]
+
+MIXED_WEATHER_CALIBCHECK = ["Vladivostok", "Ulaanbaatar", "Yerevan", "Tallinn"]
