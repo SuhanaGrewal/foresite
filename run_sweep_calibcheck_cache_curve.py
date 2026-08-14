@@ -30,3 +30,14 @@ CACHE_FRACTIONS = [0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.15, 0.20, 0.30, 0
 
 def calibcheck_trace_ids(features_csv_path: str = SWEEP_CALIBCHECK_FEATURES_CSV_PATH) -> list:
     return sorted(pd.read_csv(features_csv_path)["trace_id"].unique())
+
+
+def run_calibcheck_curve():
+    model_bundle = joblib.load(MODEL_PATH)
+    model = model_bundle["model"]
+    feature_names = model_bundle["feature_names"]
+
+    trace_ids = calibcheck_trace_ids()
+    touches = build_combined_touches(feature_names, SWEEP_CALIBCHECK_FEATURES_CSV_PATH, trace_ids)
+    combined_events = [t["item_id"] for t in touches]
+    n_distinct = len(set(combined_events))
