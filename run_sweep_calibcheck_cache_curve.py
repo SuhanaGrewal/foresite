@@ -64,3 +64,12 @@ def run_calibcheck_curve():
         # or pressure_threshold override -- these are the exact same values
         # calibrated against features_sweep_holdout.csv, unchanged
         hybrid_hit_rate = run_hybrid(touches, cache_size, model, feature_names)
+
+        pred_diff = predictor_hit_rate - lru_hit_rate
+        hybrid_diff = hybrid_hit_rate - lru_hit_rate
+
+        label = f"{cache_size} ({fraction:.0%})"
+        print(
+            f"{label:<16}{lru_hit_rate:>7.1%} {lfu_hit_rate:>7.1%} {belady_hit_rate:>7.1%} "
+            f"{predictor_hit_rate:>10.1%} {hybrid_hit_rate:>8.1%} {hybrid_diff:>+10.1%} {pred_diff:>+11.1%}"
+        )
