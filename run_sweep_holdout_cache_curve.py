@@ -50,7 +50,10 @@ def run_cache_curve():
     print(f"combined event sequence: {len(combined_events)} events, {n_distinct} distinct items")
     print()
 
-    header = f"{'cache size':<20}{'LRU':>8}{'LFU':>8}{'Belady':>8}{'Predictor':>11}{'Pred - LRU':>12}{'headroom left':>16}"
+    header = (
+        f"{'cache size':<16}{'LRU':>8}{'LFU':>8}{'Belady':>8}{'Predictor':>11}"
+        f"{'Hybrid':>9}{'Hyb - LRU':>11}{'Pred - LRU':>12}"
+    )
     print(header)
     print("-" * len(header))
 
