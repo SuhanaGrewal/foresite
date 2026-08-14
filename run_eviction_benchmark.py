@@ -64,50 +64,61 @@ MODEL_PATH = "model.joblib"
 CACHE_SIZE_FRACTIONS = {"small": 0.05, "medium": 0.20, "large": 0.50}
 
 
-def build_combined_test_touches(feature_names: list, features_csv_path: str = FEATURES_CSV_PATH):
+def build_combined_touches(feature_names: list, features_csv_path: str, trace_ids: list):
     """
-    returns (touches, test_ids): touches is a list of per-touch dicts
-    ({"item_id": ..., "static_features": {...}}), one per real touch across
-    every held-out test trace, concatenated in sorted trace_id then
-    row_index order. static_features carries each touch's own real values
-    for every column in feature_names (cleaned identically to how
-    load_features() cleans training data, via the shared
-    clean_feature_values helper, so the model sees the same value
+    returns a list of per-touch dicts ({"item_id": ..., "static_features":
+    {...}}), one per real touch across every given trace_id, concatenated
+    in sorted trace_id then row_index order. static_features carries each
+    touch's own real values for every column in feature_names (cleaned
+    identically to how load_features() cleans training data, via the
+    shared clean_feature_values helper, so the model sees the same value
     distribution at eviction time it saw during training) -- including
     placeholder values for row_index/steps_since_last_seen/
     seconds_since_last_seen, which run_predictor_dynamic always overwrites
     with values recomputed live against the combined sequence.
+
+    generic over which trace_ids and which CSV -- used both for the
+    general benchmark's held-out test split (build_combined_test_touches
+    below) and for run_sweep_eviction_benchmark.py's sweep-condition
+    traces (all of them, since none were seen during training either way).
     """
-    df_for_split = load_features(features_csv_path)
-    _, _, _, test_ids = split_by_trace(df_for_split)
-
     raw = pd.read_csv(features_csv_path)
-    raw = raw[raw["trace_id"].isin(test_ids)].copy()
+    raw = raw[raw["trace_id"].isin(trace_ids)].copy()
 
-    # sorted trace_id order (matching test_ids), then row order within a
-    # trace -- this is what "concatenated in order" means for the combined
-    # sequence
-    raw["trace_id"] = pd.Categorical(raw["trace_id"], categories=sorted(test_ids), ordered=True)
+    # sorted trace_id order, then row order within a trace -- this is what
+    # "concatenated in order" means for the combined sequence
+    raw["trace_id"] = pd.Categorical(raw["trace_id"], categories=sorted(trace_ids), ordered=True)
     raw = raw.sort_values(["trace_id", "row_index"])
     raw = clean_feature_values(raw)
 
-    touches = [
+    return [
         {"item_id": record["item_id"], "static_features": {name: record[name] for name in feature_names}}
         for record in raw[["item_id"] + feature_names].to_dict("records")
     ]
+
+
+def build_combined_test_touches(feature_names: list, features_csv_path: str = FEATURES_CSV_PATH):
+    """
+    returns (touches, test_ids): build_combined_touches restricted to
+    train_predictor.py's own held-out test split (same features.csv, same
+    RANDOM_SEED -- exactly the traces model.joblib never saw during
+    training or cross-validation).
+    """
+    df_for_split = load_features(features_csv_path)
+    _, _, _, test_ids = split_by_trace(df_for_split)
+    touches = build_combined_touches(feature_names, features_csv_path, test_ids)
     return touches, test_ids
 
 
-def run_benchmark():
-    model_bundle = joblib.load(MODEL_PATH)
-    model = model_bundle["model"]
-    feature_names = model_bundle["feature_names"]
-
-    touches, test_ids = build_combined_test_touches(feature_names)
+def run_policies_on_touches(touches: list, model, feature_names: list) -> None:
+    """
+    runs LRU/LFU/Belady/predictor on `touches` at each of CACHE_SIZE_FRACTIONS
+    and prints a hit-rate table. shared by the general (held-out test split)
+    and sweep-condition benchmarks so both report identically-shaped results.
+    """
     combined_events = [t["item_id"] for t in touches]
     n_distinct = len(set(combined_events))
 
-    print(f"held-out test traces: {len(test_ids)}")
     print(f"combined event sequence: {len(combined_events)} events, {n_distinct} distinct items")
     print()
 
@@ -125,6 +136,16 @@ def run_benchmark():
 
         label = f"{size_name} ({cache_size}, {fraction:.0%})"
         print(f"{label:<24}{lru_hit_rate:>7.1%} {lfu_hit_rate:>7.1%} {belady_hit_rate:>7.1%} {predictor_hit_rate:>10.1%}")
+
+
+def run_benchmark():
+    model_bundle = joblib.load(MODEL_PATH)
+    model = model_bundle["model"]
+    feature_names = model_bundle["feature_names"]
+
+    touches, test_ids = build_combined_test_touches(feature_names)
+    print(f"held-out test traces: {len(test_ids)}")
+    run_policies_on_touches(touches, model, feature_names)
 
     print()
     print(
