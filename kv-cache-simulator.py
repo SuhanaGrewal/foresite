@@ -279,6 +279,17 @@ PRESSURE_WINDOW_MULTIPLIER = 20
 PRESSURE_RATIO_THRESHOLD = 12
 
 
+def run_hybrid(
+    touches,
+    cache_size,
+    model,
+    feature_names,
+    window_multiplier=PRESSURE_WINDOW_MULTIPLIER,
+    pressure_threshold=PRESSURE_RATIO_THRESHOLD,
+):
+    pass
+
+
 if __name__ == "__main__":
     events = generate_fake_events()
  
