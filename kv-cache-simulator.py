@@ -236,6 +236,14 @@ working-set-style local measurement (the same idea real OSes have long used
 for memory-pressure detection), fully causal -- only ever looks at
 events[max(0, i-W) : i], strictly before the current position, same rule
 every other feature in this project follows.
+
+PRESSURE_WINDOW_MULTIPLIER=20 and PRESSURE_RATIO_THRESHOLD=12 were fixed
+and calibrated respectively using ONLY the already-generated held-out sweep
+data (10 traces, features_sweep_holdout.csv) and the already-run 12-point
+cache-size curve -- never new data collection, never the model, never
+training. The deployed policy only ever computes and compares against
+pressure_ratio at runtime; it never sees the cache_size/n_distinct fraction
+or percentage that produced this calibration.
 '''
 
 
