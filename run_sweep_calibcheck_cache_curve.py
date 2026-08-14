@@ -26,3 +26,7 @@ run_hybrid = _kv_cache_simulator.run_hybrid
 
 SWEEP_CALIBCHECK_FEATURES_CSV_PATH = "features_sweep_calibcheck.csv"
 CACHE_FRACTIONS = [0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50]
+
+
+def calibcheck_trace_ids(features_csv_path: str = SWEEP_CALIBCHECK_FEATURES_CSV_PATH) -> list:
+    return sorted(pd.read_csv(features_csv_path)["trace_id"].unique())
