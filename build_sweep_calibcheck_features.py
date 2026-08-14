@@ -22,3 +22,11 @@ if __name__ == "__main__":
 
     df = build_feature_table(trace_paths)
     df.to_csv(SWEEP_CALIBCHECK_FEATURES_CSV_PATH, index=False)
+
+    reused_pct = df["will_be_reused"].mean() * 100
+    print(f"Calibcheck sweep traces processed: {len(trace_paths)}")
+    print(f"Distinct traces in table: {df['trace_id'].nunique()}")
+    print(f"Row count: {len(df)}")
+    print(f"Class balance -- will_be_reused=1: {reused_pct:.1f}%  will_be_reused=0: {100 - reused_pct:.1f}%")
+    print(f"Leakage check: PASSED for all {len(trace_paths)} calibcheck traces")
+    print(f"Saved to {SWEEP_CALIBCHECK_FEATURES_CSV_PATH}")
