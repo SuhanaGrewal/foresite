@@ -71,8 +71,8 @@ def run_cache_curve():
 
         label = f"{cache_size} ({fraction:.0%})"
         print(
-            f"{label:<20}{lru_hit_rate:>7.1%} {lfu_hit_rate:>7.1%} {belady_hit_rate:>7.1%} "
-            f"{predictor_hit_rate:>10.1%} {diff:>+11.1%} {headroom:>15.1%}"
+            f"{label:<16}{lru_hit_rate:>7.1%} {lfu_hit_rate:>7.1%} {belady_hit_rate:>7.1%} "
+            f"{predictor_hit_rate:>10.1%} {hybrid_hit_rate:>8.1%} {hybrid_diff:>+10.1%} {pred_diff:>+11.1%}"
         )
 
     print()
