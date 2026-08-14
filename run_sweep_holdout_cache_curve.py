@@ -1,16 +1,16 @@
 """
 Run Sweep Holdout Cache Curve
 
-Explores where the predictor's edge over LRU is largest, on the SAME
-already-verified held-out sweep data (features_sweep_holdout.csv) and
-SAME trained model.joblib as run_sweep_holdout_eviction_benchmark.py --
-no new trace generation, no retraining, no change to the model or
-training set. Only difference from that script: tests a much finer grid
-of cache-size fractions instead of just small/medium/large, since
-medium/large already showed LRU sitting within ~1-7% of Belady's optimal
-ceiling (very little headroom for ANY policy to improve on there -- see
-the math in the commit/conversation history), while small (5%) was the
-one point where the predictor genuinely beat LRU.
+Explores where the predictor's edge over LRU is largest, and (once
+run_hybrid existed) whether the regime-aware hybrid policy closes the gap
+where the raw predictor loses -- on the SAME already-verified held-out
+sweep data (features_sweep_holdout.csv) and SAME trained model.joblib as
+run_sweep_holdout_eviction_benchmark.py. No new trace generation, no
+retraining, no change to the model or training set for either the raw
+predictor or the hybrid column: run_hybrid's PRESSURE_WINDOW_MULTIPLIER/
+PRESSURE_RATIO_THRESHOLD were calibrated separately (see
+kv-cache-simulator.py's run_hybrid docstring) using only this same
+held-out curve's own results, never new data.
 
 Reports EVERY tested fraction, not just favorable ones -- the point is
 to honestly find where (if anywhere) a real, non-trivial gap exists, not
