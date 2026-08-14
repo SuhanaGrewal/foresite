@@ -45,4 +45,9 @@ WIKIPEDIA_TOPICS_CALIBCHECK = [
     "the causes of the Nika riots",
     "the history of the Millau Viaduct",
     "the invention of the stethoscope",
+    "the life of Rosalind Franklin",
+    "the history of the Berlin Wall's checkpoints",
+    "the discovery of quasars",
+    "the causes of the Second Congo War",
+    "the history of the Krakatoa eruption",
 ]
