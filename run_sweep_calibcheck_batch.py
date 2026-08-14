@@ -125,3 +125,11 @@ async def run_sweep_calibcheck_batch(max_new: int = None):
                 os.remove(trace_path)
             print(f"    FAILED: {type(e).__name__}: {e}")
             continue
+
+        succeeded += 1
+        print(f"    synthesized answer: {final_answer[:200]}")
+        print(f"    trace written to {trace_path}")
+
+    print(f"\n=== calibcheck batch invocation complete: {succeeded} succeeded, {failed} failed this run ===")
+    if failed:
+        print(f"    see {ERROR_LOG_PATH} for failure details")
