@@ -77,4 +77,14 @@ SWEEP_CALIBCHECK_TASKS = [
         "user_task": "Research 10 different, unrelated general-knowledge topics and report a brief summary of each.",
         "descriptions": _wiki_descriptions(WIKIPEDIA_TOPICS_CALIBCHECK),
     },
+    {
+        "name": "mixed_sweep_calibcheck",
+        "user_task": "Complete 10 independent tasks spanning weather checks, product catalog lookups, topic research, and quick calculations, and report a summary.",
+        "descriptions": (
+            _weather_descriptions(MIXED_WEATHER_CALIBCHECK)
+            + MIXED_CATALOG_CALIBCHECK
+            + _wiki_descriptions(MIXED_WIKI_CALIBCHECK)
+            + MIXED_PYTHON_CALIBCHECK
+        ),
+    },
 ]
