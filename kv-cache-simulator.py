@@ -306,7 +306,8 @@ def run_hybrid(
         row["steps_since_last_seen"] = steps_since_last_seen
         row["seconds_since_last_seen"] = seconds_since_last_seen
         live_rows.append(row)
-        pass
+
+        last_seen_position[item_id] = i
 
 
 if __name__ == "__main__":
