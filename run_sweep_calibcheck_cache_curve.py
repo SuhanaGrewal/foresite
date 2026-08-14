@@ -41,3 +41,14 @@ def run_calibcheck_curve():
     touches = build_combined_touches(feature_names, SWEEP_CALIBCHECK_FEATURES_CSV_PATH, trace_ids)
     combined_events = [t["item_id"] for t in touches]
     n_distinct = len(set(combined_events))
+
+    print(f"calibcheck sweep traces (never used in training or calibration): {len(trace_ids)}")
+    print(f"combined event sequence: {len(combined_events)} events, {n_distinct} distinct items")
+    print()
+
+    header = (
+        f"{'cache size':<16}{'LRU':>8}{'LFU':>8}{'Belady':>8}{'Predictor':>11}"
+        f"{'Hybrid':>9}{'Hyb - LRU':>11}{'Pred - LRU':>12}"
+    )
+    print(header)
+    print("-" * len(header))
