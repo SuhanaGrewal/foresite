@@ -244,6 +244,17 @@ cache-size curve -- never new data collection, never the model, never
 training. The deployed policy only ever computes and compares against
 pressure_ratio at runtime; it never sees the cache_size/n_distinct fraction
 or percentage that produced this calibration.
+
+Calibration history, reported honestly rather than presenting only the
+answer that worked: a first attempt used W = cache_size * 5 and a threshold
+(3.85) picked from each cache size's MEAN pressure_ratio across the whole
+trace. That failed at the decision level -- checked by counting how many
+individual eviction decisions actually landed on each side of the
+threshold, not just trusting the aggregate means. At cache_size=52 (the
+worst dip, -5.2pp), 78% of individual decisions still exceeded the
+threshold and used the predictor, because pressure_ratio fluctuates
+heavily moment-to-moment and the per-cache-size mean was a poor summary of
+that.
 '''
 
 
