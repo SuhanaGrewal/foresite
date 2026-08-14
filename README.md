@@ -2,7 +2,6 @@
 predictive kv-cache management for ai agents; adaptively optimizes context eviction for caches based on cache pessure, using a mix of agent execution signals and recency to predict reuse of cached info
 
 ___
-
 **The problem**
 
 Agent workloads (comprising multi-step tool use and multi-agent orchestration) grow KV caches fast, and re-send large amounts of overlapping context on every step. Existing eviction policies, including ones used by vLLM and SGLang decide what to evict based purely on recency (LRU) or frequency (LFU).
@@ -15,7 +14,6 @@ LRU performs near-optimally when the cache is large relative to the working set:
 Its accuracy degrades as cache pressure increases: at small cache sizes (roughly 1–5% relative to distinct items in play), LRU is forced into frequent, consequential eviction, and recency alone becomes a poor predictor of what's needed next.
 
 ___
-
 **The core idea**
 
 A system that predicts, for each item touched during an LLM agent's execution trace, whether that item will be reused later and uses that prediction to make smarter KV-cache eviction decisions than plain LRU.
@@ -23,12 +21,10 @@ A system that predicts, for each item touched during an LLM agent's execution tr
 Given the finding that LRU works near-optimally with large cache sizes, the model was built into a hybdird system dynamically switching between the agentic behaviour-based predictor and LRU.
 
 ___
-
 **The solution**
 
 A hybrid eviction policy that measures live cache pressure (smaller cache size relative to number of items represents higher pressure) and adaptively switches between the predictor and standard LRU.
 ___
-
 **The features**
 
 To predict context reuse, _foresite_ computes agents' behavioural signals including:
@@ -60,7 +56,6 @@ _Runtime signal (hybrid policy only, not the base predictor)_
 
 - A live cache-pressure measure (cache size relative to recently observed distinct items), used ONLY to decide whether to consult the predictor or LRU.
 ___
-
 **What's actually here**
 
 ****1. Multi-agent orchestrator** (`orchestrator.py`):**
@@ -74,7 +69,6 @@ ___
 - every step is logged with real processing time.
 
 **3. Tools:**
-
 web_search grounded in:
 - FRAMES (a published multi-hop QA dataset)
 - real Wikipedia content
@@ -97,26 +91,55 @@ compares the trained predictor against 3 strategies to decide what to keep in me
 - **`LFU`:** keep most frequently used information
 - **Belady's Algorithm:** A theoretical, perfect strategy that can see the complete future (of context reuse); impossible in real life, but useful as a ceiling to measure how close to ideal the predictor is.
 ___
-
+**How are results measured**
+`hit_rate` is calculated: the % of real reuse opportunities the policy actually captured before eviction, out of the max possible (Belady's optimal).
+___
 **The actual result**
 
 **1. Normal, short multi-agent tasks:** LRU already performs close to Belady's theoretical optimum; there's little room for any policy to improve on it.
 
- **2. Sweep-heavy conditions and tight cache sizes:** (When there are many one-off lookups in a burst (sweep-heavy); and 1–5% of the working set) the predictor shows a verified advantage over LRU. 
-- Original dataset: predictor beat LRU by +1.3 to +5.1 percentage points
-- Fresh dataset: predictor beat LRU by +1.6 to +3.7 percentage points  
+ **2. Sweep-heavy conditions and tight cache sizes:** When there are many one-off lookups in a burst (sweep-heavy) and a range of 1-5% of the working set (tight cache size) the predictor shows a verified advantage over LRU. 
+**- Original dataset**: predictor beat LRU by +1.3 to +5.1 percentage points
+**- Fresh dataset:** predictor beat LRU by +1.6 to +3.7 percentage points  
 
 This advantage does **not** hold uniformly at every cache size (between roughly 7-50% cache) the raw predictor becomes unreliable.
 
 To handle this, a **hybrid policy** was built: it measures live cache pressure at runtime and automatically switches between the predictor and LRU depending on conditions, rather than trusting the predictor blindly everywhere. 
 
-**Generalization of Results**
+**Generalization of results**
 
 This hybrid was tested for generalization on a second, independent dataset it had never touched. 
 
-**Result:** 
+**Conclusion:** 
 1. Across **both datasets, at all 12 tested cache sizes (24 total combinations), the hybrid never once performed worse than plain LRU.**
 2. In the tight-cache range, the hybrid captures most of the predictor's advantage.
 3. Above ~7% cache, the hybrid deliberately settles to matching plain LRU exactly, rather than chasing the raw predictor's unreliable behavior.
+___
+**How to run it**
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# generate real traces
+venv/bin/python3 run_batch.py
+venv/bin/python3 run_frames_batch.py
+
+# build the labeled feature table
+venv/bin/python3 feature_extraction.py
+
+# train the predictor
+venv/bin/python3 train_predictor.py
+
+# run the eviction benchmark
+venv/bin/python3 kv-cache-simulator.py
+```
+____
+**Limitations**
+- Predictive signals requiring model-internal access (attention weights, KV-tensor magnitudes) are not implemented.
+- The local model (Qwen2.5, 1.5B/7B) shows measurably less reliable tool selection than larger hosted models.
+- The hybrid policy's safety property (never worse than LRU) generalizes across dataset scales at an absolute; its optimality (capturing the predictor's full advantage) does not yet.
+- The current dataset (150+ traces) is real but should be read as a strong, verified preliminary finding, not a final, statistically exhaustive evaluation.
 
 
