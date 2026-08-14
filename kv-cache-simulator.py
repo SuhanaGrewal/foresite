@@ -366,7 +366,6 @@ def run_hybrid(
     pressure_threshold=PRESSURE_THRESHOLD,
 ):
     events = [t["item_id"] for t in touches]
-    window = cache_size * window_multiplier
 
     # same live-feature-building + one batched predict_proba pass as
     # run_predictor_dynamic, so the predictor half of this hybrid scores
