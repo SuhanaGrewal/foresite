@@ -64,9 +64,10 @@ def run_cache_curve():
         lfu_hit_rate = run_lfu(combined_events, cache_size)
         belady_hit_rate = run_belady(combined_events, cache_size)
         predictor_hit_rate = run_predictor_dynamic(touches, cache_size, model, feature_names)
+        hybrid_hit_rate = run_hybrid(touches, cache_size, model, feature_names)
 
-        diff = predictor_hit_rate - lru_hit_rate
-        headroom = belady_hit_rate - lru_hit_rate  # total ceiling ANY policy could add over LRU here
+        pred_diff = predictor_hit_rate - lru_hit_rate
+        hybrid_diff = hybrid_hit_rate - lru_hit_rate
 
         label = f"{cache_size} ({fraction:.0%})"
         print(
