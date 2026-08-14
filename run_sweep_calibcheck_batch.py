@@ -65,3 +65,16 @@ MIXED_PYTHON_CALIBCHECK = [
     "Use the code execution tool to calculate the sum of the first 20 even numbers.",
     "Use the code execution tool to calculate 18 percent of 640.",
 ]
+
+SWEEP_CALIBCHECK_TASKS = [
+    {
+        "name": "catalog_sweep_calibcheck",
+        "user_task": "Look up 10 different category/price/rating/id queries in the product catalog and report a summary.",
+        "descriptions": CATALOG_QUERIES_CALIBCHECK,
+    },
+    {
+        "name": "wikipedia_sweep_calibcheck",
+        "user_task": "Research 10 different, unrelated general-knowledge topics and report a brief summary of each.",
+        "descriptions": _wiki_descriptions(WIKIPEDIA_TOPICS_CALIBCHECK),
+    },
+]
