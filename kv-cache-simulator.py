@@ -307,6 +307,17 @@ best cache size dropped from the old design's +3.5pp to +1.2pp -- a real,
 plainly-stated cost of trading a scale-dependent threshold for a
 scale-invariant one that only cost 1-4pp of peak performance to gain actual
 transferability.
+
+PEAK-MARGIN REGRESSION, FOUND BY DIRECT INSPECTION OF THE HIT-RATE TABLE
+(not just the diff column): the "only cost 1-4pp" framing above understated
+what actually happened at the TIGHTEST cache sizes. At 1% cache on the
+calibration set, hybrid=1.6% while the raw predictor reached 4.9% --
+the window*1/distinct_so_far design was capturing close to NONE of the
+predictor's real advantage at 1-2% cache, not a modest trim. The threshold
+(0.50) needed to protect the 7% boundary was so high that it also
+suppressed genuinely-correct predictor triggering at the smallest cache
+sizes, where the window (cache_size*1, e.g. just 7 touches at cache_size=7)
+was too short and noisy to reliably clear it.
 '''
 
 PRESSURE_WINDOW_MULTIPLIER = 1
