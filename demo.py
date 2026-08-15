@@ -193,6 +193,20 @@ def _print_comparisons(events: list, lru_decisions: list, hybrid_decisions: list
 
 
 def run_demo(task: str) -> None:
+    # checked before running the (real, 1-3 minute) orchestrator below --
+    # model.joblib is gitignored (a generated artifact, not checked into
+    # the repo), so a fresh clone won't have it yet. failing here instead
+    # of after the orchestrator call saves that wait, and this specific
+    # message is deliberately distinct from the generic try/except in
+    # main() below: a missing file is a one-time setup step, not the local
+    # model having an off moment, and should read as one.
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(
+            f"{MODEL_PATH} not found. Run `python3 train_predictor.py` first "
+            "(uses the features.csv already in the repo, takes under a minute) "
+            "to generate it, then re-run demo.py."
+        )
+
     trace_path = _run_trace(task)
 
     rows, touches, depends_on_map = build_rows_for_trace(trace_path)
@@ -244,6 +258,11 @@ def main() -> None:
     task = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TASK
     try:
         run_demo(task)
+    except FileNotFoundError as e:
+        # one-time setup gap (e.g. model.joblib not generated yet), not a
+        # flaky-run issue -- kept out of the generic retry message below so
+        # it doesn't read as "just try again" when it won't help.
+        print(f"\n[setup incomplete: {e}]")
     except Exception as e:
         if os.path.exists(DEMO_TRACE_PATH):
             os.remove(DEMO_TRACE_PATH)
