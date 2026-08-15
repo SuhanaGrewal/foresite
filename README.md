@@ -1,6 +1,6 @@
 # foresite
 predictive kv-cache management for ai agents; adaptively optimizes context eviction for caches based on cache pessure, using a mix of agent execution signals and recency to predict reuse of cached info
-
+![foresite heading](./foresite_heading.svg)
 ___
 **The problem**
 
