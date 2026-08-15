@@ -33,18 +33,28 @@ def generate_fake_events(num_events=200, num_items=15, seed=42):
     return events
 
 
-def run_lru(events, cache_size=CACHE_SIZE):
+def run_lru(events, cache_size=CACHE_SIZE, record_decisions=False):
+    """
+    record_decisions=True additionally returns a list of per-eviction-step
+    dicts ({"step": i, "evicted": item_id}), one entry per real eviction
+    (cache full + miss) -- used by demo.py to compare LRU's choices against
+    another policy's at the same trace positions. Default behavior/return
+    type (a single float) is unchanged for every existing caller.
+    """
     cache = OrderedDict()  # keeps insertion/access order
     hits = 0
-    for item in events:
+    decisions = []
+    for i, item in enumerate(events):
         if item in cache:
             hits += 1
             cache.move_to_end(item) # mark as most-recently-used
         else:
             if len(cache) >= cache_size:
-                cache.popitem(last=False) # evict least-recently-used
+                victim, _ = cache.popitem(last=False) # evict least-recently-used
+                decisions.append({"step": i, "evicted": victim})
             cache[item] = True
-    return hits / len(events)
+    hit_rate = hits / len(events)
+    return (hit_rate, decisions) if record_decisions else hit_rate
 
 
 def run_lfu(events, cache_size=CACHE_SIZE):
@@ -185,7 +195,13 @@ same "update the item's state on every touch" pattern LRU (recency) and LFU
   far fewer individual model calls.
 '''
 
-def run_predictor_dynamic(touches, cache_size, model, feature_names):
+def run_predictor_dynamic(touches, cache_size, model, feature_names, record_decisions=False):
+    """
+    record_decisions=True additionally returns a list of per-eviction-step
+    dicts ({"step": i, "evicted": item_id, "predicted_score": float}) --
+    same additive pattern as run_lru's record_decisions, default
+    behavior/return type unchanged for every existing caller.
+    """
     last_seen_position = {}
     live_rows = []
     for i, touch in enumerate(touches):
@@ -206,6 +222,7 @@ def run_predictor_dynamic(touches, cache_size, model, feature_names):
 
     cache = set()
     hits = 0
+    decisions = []
     current_score = {}  # item_id -> most recent predicted score, updated every touch
     for i, touch in enumerate(touches):
         item_id = touch["item_id"]
@@ -216,8 +233,10 @@ def run_predictor_dynamic(touches, cache_size, model, feature_names):
             if len(cache) >= cache_size:
                 victim = min(cache, key=lambda x: current_score[x])  # evict lowest CURRENT predicted reuse probability
                 cache.remove(victim)
+                decisions.append({"step": i, "evicted": victim, "predicted_score": float(current_score[victim])})
             cache.add(item_id)
-    return hits / len(touches)
+    hit_rate = hits / len(touches)
+    return (hit_rate, decisions) if record_decisions else hit_rate
 
 
 ''' Hybrid Algorithm (Step 6, regime-aware): run_predictor_dynamic beats LRU
@@ -364,7 +383,19 @@ def run_hybrid(
     feature_names,
     working_set_fraction=WORKING_SET_FRACTION,
     pressure_threshold=PRESSURE_THRESHOLD,
+    record_decisions=False,
 ):
+    """
+    record_decisions=True additionally returns a list of per-eviction-step
+    dicts ({"step": i, "evicted": item_id, "predicted_score": float,
+    "mode": "predictor" or "lru_fallback", "pressure": float}) -- same
+    additive pattern as run_lru/run_predictor_dynamic's record_decisions,
+    default behavior/return type unchanged for every existing caller.
+    predicted_score is current_score[victim] regardless of which mode
+    fired, since it's tracked every touch either way -- useful context
+    even on an lru_fallback eviction (shows what the predictor thought of
+    the item LRU-recency ended up choosing anyway).
+    """
     events = [t["item_id"] for t in touches]
 
     # same live-feature-building + one batched predict_proba pass as
@@ -391,6 +422,7 @@ def run_hybrid(
 
     cache = set()
     hits = 0
+    decisions = []
     current_score = {}
     last_touched_position = {}  # item_id -> most recent index touched, for the LRU fallback
     for i, item_id in enumerate(events):
@@ -411,15 +443,27 @@ def run_hybrid(
                 pressure = cache_size / max(working_set_size, 1)
 
                 if pressure <= pressure_threshold:  # LOW ratio: cache is small relative to the working set
+                    mode = "predictor"
                     victim = min(cache, key=lambda x: current_score[x])  # predictor: lowest predicted reuse probability
                 else:
+                    mode = "lru_fallback"
                     victim = min(cache, key=lambda x: last_touched_position[x])  # LRU fallback: oldest last touch
                 cache.remove(victim)
+                decisions.append(
+                    {
+                        "step": i,
+                        "evicted": victim,
+                        "predicted_score": float(current_score[victim]),
+                        "mode": mode,
+                        "pressure": pressure,
+                    }
+                )
             cache.add(item_id)
 
         last_touched_position[item_id] = i
 
-    return hits / len(events)
+    hit_rate = hits / len(events)
+    return (hit_rate, decisions) if record_decisions else hit_rate
 
 
 if __name__ == "__main__":
