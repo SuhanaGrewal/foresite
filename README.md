@@ -13,18 +13,44 @@ Neither uses any signal about what an agent is actually doing.
 
 LRU performs near-optimally when the cache is large relative to the working set: there's enough room that eviction decisions barely matter. 
 Its accuracy degrades as cache pressure increases: at small cache sizes (roughly 1–5% relative to distinct items in play), LRU is forced into frequent, consequential eviction, and recency alone becomes a poor predictor of what's needed next.
-
 ___
 **The core idea**
 
 A system that predicts, for each item touched during an LLM agent's execution trace, whether that item will be reused later and uses that prediction to make smarter KV-cache eviction decisions than plain LRU.
 
 Given the finding that LRU works near-optimally with large cache sizes, the model was built into a hybdird system dynamically switching between the agentic behaviour-based predictor and LRU.
-
 ___
 **The solution**
 
 A hybrid eviction policy that measures live cache pressure (smaller cache size relative to number of items represents higher pressure) and adaptively switches between the predictor and standard LRU.
+___
+**Try the live demo**
+
+Runs one real task through the whole system end-to-end (orchestrator → trace → features → eviction comparison) and prints the result. No API keys needed, everything runs locally.
+
+1. Clone this repo and `cd` into it: `git clone https://github.com/SuhanaGrewal/foresite.git && cd foresite`
+2. Install [Ollama](https://ollama.com) and start it: `ollama serve`
+3. Pull the two models: `ollama pull qwen2.5:7b` and `ollama pull qwen2.5:1.5b`
+4. Set up the environment:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+5. Generate the trained model (a one-time step -- it's not checked into the repo, but the `features.csv` it's trained from is, so this just trains, it doesn't need to regenerate any traces):
+   ```bash
+   python3 train_predictor.py
+   ```
+6. Run the demo:
+   ```bash
+   python3 demo.py
+   ```
+7. To try your own task instead of the built-in example:
+   ```bash
+   python3 demo.py "your task here"
+   ```
+
+Steps 1-5 are one-time setup. After that, just step 6 (or 7) each time you want to run it. Takes about 1–3 minutes. If a run doesn't complete cleanly (the small local model occasionally has an off moment), just run it again.
 ___
 **The features**
 
@@ -141,34 +167,6 @@ This hybrid was tested for generalization on a second, independent dataset it ha
 1. Across **both datasets, at all 12 tested cache sizes (24 total combinations), the hybrid never once performed worse than plain LRU.**
 2. In the tight-cache range, the hybrid captures most of the predictor's advantage.
 3. Above ~7% cache, the hybrid deliberately settles to matching plain LRU exactly, rather than chasing the raw predictor's unreliable behavior.
-___
-**Try the live demo**
-
-Runs one real task through the whole system end-to-end (orchestrator → trace → features → eviction comparison) and prints the result. No API keys needed, everything runs locally.
-
-1. Clone this repo and `cd` into it: `git clone https://github.com/SuhanaGrewal/foresite.git && cd foresite`
-2. Install [Ollama](https://ollama.com) and start it: `ollama serve`
-3. Pull the two models: `ollama pull qwen2.5:7b` and `ollama pull qwen2.5:1.5b`
-4. Set up the environment:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-5. Generate the trained model (a one-time step -- it's not checked into the repo, but the `features.csv` it's trained from is, so this just trains, it doesn't need to regenerate any traces):
-   ```bash
-   python3 train_predictor.py
-   ```
-6. Run the demo:
-   ```bash
-   python3 demo.py
-   ```
-7. To try your own task instead of the built-in example:
-   ```bash
-   python3 demo.py "your task here"
-   ```
-
-Steps 1-5 are one-time setup. After that, just step 6 (or 7) each time you want to run it. Takes about 1–3 minutes. If a run doesn't complete cleanly (the small local model occasionally has an off moment), just run it again.
 ____
 **Limitations**
 - Predictive signals requiring model-internal access (attention weights, KV-tensor magnitudes) are not implemented.
