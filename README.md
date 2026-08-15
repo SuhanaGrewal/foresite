@@ -167,24 +167,29 @@ ___
 
 Runs one real task through the whole system end-to-end (orchestrator → trace → features → eviction comparison) and prints the result. No API keys needed, everything runs locally.
 
-1. Install [Ollama](https://ollama.com) and start it: `ollama serve`
-2. Pull the two models: `ollama pull qwen2.5:7b` and `ollama pull qwen2.5:1.5b`
-3. Set up the environment (skip if you already did this above):
+1. Clone this repo and `cd` into it: `git clone https://github.com/SuhanaGrewal/foresite.git && cd foresite`
+2. Install [Ollama](https://ollama.com) and start it: `ollama serve`
+3. Pull the two models: `ollama pull qwen2.5:7b` and `ollama pull qwen2.5:1.5b`
+4. Set up the environment (skip if you already did this above):
    ```bash
    python3 -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
    ```
-4. Run it:
+5. Generate the trained model (a one-time step -- it's not checked into the repo, but the `features.csv` it's trained from is, so this just trains, it doesn't need to regenerate any traces):
+   ```bash
+   python3 train_predictor.py
+   ```
+6. Run the demo:
    ```bash
    python3 demo.py
    ```
-5. To try your own task instead of the built-in example:
+7. To try your own task instead of the built-in example:
    ```bash
    python3 demo.py "your task here"
    ```
 
-Takes about 1–3 minutes. If a run doesn't complete cleanly (the small local model occasionally has an off moment), just run it again.
+Steps 1-5 are one-time setup. After that, just step 6 (or 7) each time you want to run it. Takes about 1–3 minutes. If a run doesn't complete cleanly (the small local model occasionally has an off moment), just run it again.
 ____
 **Limitations**
 - Predictive signals requiring model-internal access (attention weights, KV-tensor magnitudes) are not implemented.
