@@ -148,7 +148,7 @@ Runs one real task through the whole system end-to-end (orchestrator â†’ trace â
 
 1. Install [Ollama](https://ollama.com) and start it: `ollama serve`
 2. Pull the two models: `ollama pull qwen2.5:7b` and `ollama pull qwen2.5:1.5b`
-3. Set up the environment (skip if you already did this above):
+3. Set up the environment:
    ```bash
    python3 -m venv venv
    source venv/bin/activate
