@@ -162,6 +162,29 @@ venv/bin/python3 train_predictor.py
 # run the eviction benchmark
 venv/bin/python3 kv-cache-simulator.py
 ```
+___
+**Try the live demo**
+
+Runs one real task through the whole system end-to-end (orchestrator → trace → features → eviction comparison) and prints the result. No API keys needed, everything runs locally.
+
+1. Install [Ollama](https://ollama.com) and start it: `ollama serve`
+2. Pull the two models: `ollama pull qwen2.5:7b` and `ollama pull qwen2.5:1.5b`
+3. Set up the environment (skip if you already did this above):
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+4. Run it:
+   ```bash
+   python3 demo.py
+   ```
+5. To try your own task instead of the built-in example:
+   ```bash
+   python3 demo.py "your task here"
+   ```
+
+Takes about 1–3 minutes. If a run doesn't complete cleanly (the small local model occasionally has an off moment), just run it again.
 ____
 **Limitations**
 - Predictive signals requiring model-internal access (attention weights, KV-tensor magnitudes) are not implemented.
