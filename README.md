@@ -37,7 +37,7 @@ Runs one real task through the whole system end-to-end (orchestrator â†’ trace â
    source venv/bin/activate
    pip install -r requirements.txt
    ```
-5. Generate the trained model (a one-time step -- it's not checked into the repo, but the `features.csv` it's trained from is, so this just trains, it doesn't need to regenerate any traces):
+5. Generate the trained model (a one-time step it's not checked into the repo, but the `features.csv` it's trained from is, so this just trains, it doesn't need to regenerate any traces):
    ```bash
    python3 train_predictor.py
    ```
