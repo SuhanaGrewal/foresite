@@ -142,27 +142,6 @@ This hybrid was tested for generalization on a second, independent dataset it ha
 2. In the tight-cache range, the hybrid captures most of the predictor's advantage.
 3. Above ~7% cache, the hybrid deliberately settles to matching plain LRU exactly, rather than chasing the raw predictor's unreliable behavior.
 ___
-**How to run it**
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# generate real traces
-venv/bin/python3 run_batch.py
-venv/bin/python3 run_frames_batch.py
-
-# build the labeled feature table
-venv/bin/python3 feature_extraction.py
-
-# train the predictor
-venv/bin/python3 train_predictor.py
-
-# run the eviction benchmark
-venv/bin/python3 kv-cache-simulator.py
-```
-___
 **Try the live demo**
 
 Runs one real task through the whole system end-to-end (orchestrator → trace → features → eviction comparison) and prints the result. No API keys needed, everything runs locally.
@@ -170,7 +149,7 @@ Runs one real task through the whole system end-to-end (orchestrator → trace �
 1. Clone this repo and `cd` into it: `git clone https://github.com/SuhanaGrewal/foresite.git && cd foresite`
 2. Install [Ollama](https://ollama.com) and start it: `ollama serve`
 3. Pull the two models: `ollama pull qwen2.5:7b` and `ollama pull qwen2.5:1.5b`
-4. Set up the environment (skip if you already did this above):
+4. Set up the environment:
    ```bash
    python3 -m venv venv
    source venv/bin/activate
