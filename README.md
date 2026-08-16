@@ -60,7 +60,7 @@ _Content/size signals_
 - `content_length_chars`: raw character length of the content
 - `token_count`: real token count (via tokenizer)
 
-__Temporal signals_
+_Temporal signals_
 - `steps_since_last_seen`: how many events since this exact content last appeared (-1 if first occurrence)
 - `seconds_since_last_seen`: real wall-clock time since last touch
 - `measured_latency_seconds`: how long the model call that produced this content took
