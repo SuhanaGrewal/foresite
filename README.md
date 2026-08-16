@@ -155,9 +155,9 @@ Runs one real task through the whole system end-to-end (orchestrator â†’ trace â
    source venv/bin/activate
    pip install -r requirements.txt
    ```
-5. Generate the trained model (a one-time step -- it's not checked into the repo, but the `features.csv` it's trained from is, so this just trains, it doesn't need to regenerate any traces):
+5. Generate the trained model (a one-time step -- it's not checked into the repo, but the feature CSVs it's trained from are, so this just trains, it doesn't need to regenerate any traces). `--extra-input features_sweep.csv` folds in the sweep-heavy training examples the model needs to actually learn the reuse pattern the predictor/hybrid are built around -- without it you'll still get a working model, just not one that shows the hybrid's real advantage:
    ```bash
-   python3 train_predictor.py
+   python3 train_predictor.py --extra-input features_sweep.csv
    ```
 6. Run the demo:
    ```bash
