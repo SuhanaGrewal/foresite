@@ -3,8 +3,8 @@ Demo
 
 A live, runnable, end-to-end walkthrough of the whole Foresite pipeline on
 one fresh task: real orchestrator run -> real trace -> real leakage-checked
-features -> LRU vs the raw predictor vs the Hybrid policy, on that trace's
-own real event sequence. Meant to be run in front of someone, not batched.
+features -> LRU vs the raw predictor vs the Hybrid policy. Meant to be run
+in front of someone, not batched.
 
 python3 demo.py                    # runs the built-in example task
 python3 demo.py "your task here"   # runs a custom task
@@ -12,20 +12,41 @@ python3 demo.py "your task here"   # runs a custom task
 Everything downstream of trace generation reuses the project's existing,
 already-verified functions directly (feature_extraction.build_rows_for_trace
 and assert_no_leakage, kv-cache-simulator's run_lru/run_predictor_dynamic/
-run_hybrid) rather than reimplementing any of that logic here.
+run_hybrid, run_eviction_benchmark's build_combined_touches, and
+run_sweep_holdout_eviction_benchmark's sweep_holdout_trace_ids) rather than
+reimplementing any of that logic here.
 
-Only the LRU-vs-Hybrid step-by-step comparison is specific to this file:
-LRU and Hybrid are each simulated independently over the identical fresh
-event sequence, and a line is only printed for a trace position where BOTH
-policies evicted something at that exact step AND their victims differ --
-steps where they agreed, or where one side's cache had already diverged
-into a hit while the other missed, are skipped, since there is nothing to
-usefully contrast there. This keeps the output focused on genuine
-disagreements instead of a wall of restated agreement.
+The eviction sim does NOT run on the fresh trace alone. run_hybrid's live
+pressure signal (see its docstring in kv-cache-simulator.py) only ever
+switches into predictor mode once its working-set window has accumulated
+enough distinct items -- calibrated against combined sequences of
+hundreds-to-thousands of events, the same scale run_eviction_benchmark.py
+uses to verify the README's numbers. A single ~20-50 touch demo trace never
+reaches that scale, so Hybrid would be structurally stuck at exact LRU
+parity every time -- not a bug, just the wrong regime to evaluate it in.
+Instead, the fresh trace is appended AFTER the same held-out sweep-heavy
+background traffic (features_sweep_holdout.csv -- 10 traces, 746 distinct
+items, never used in training or calibration) that README.md's calibration
+table is actually measured against -- this mirrors how a real KV cache
+operates (continuously warm from prior traffic, never cold-started per
+task) and reaches the specific scale AND workload regime (sweep-heavy,
+many one-off lookups) where the hybrid's advantage is real and verified.
+The general run_eviction_benchmark.py held-out split is NOT used here --
+README.md is explicit that normal, non-sweep traces are a regime where
+"LRU already performs close to Belady's theoretical optimum," so background
+traffic drawn from there would (correctly) show little to no hybrid
+advantage; it isn't the regime the hybrid was built to help with.
+
+The step-by-step comparison only looks at steps inside the fresh task's OWN
+region (after the background traffic, so the pressure signal has already
+warmed up) -- this keeps the printed disagreements about the task that was
+actually just run live, not about the background traffic. A line is only
+printed where BOTH policies evicted something at that exact step AND their
+victims differ -- steps where they agreed are skipped, since there's
+nothing to usefully contrast there.
 """
 
 import asyncio
-import glob
 import importlib.util
 import os
 import sys
@@ -35,6 +56,8 @@ import pandas as pd
 
 from feature_extraction import assert_no_leakage, build_rows_for_trace
 from orchestrator import orchestrate
+from run_eviction_benchmark import build_combined_touches
+from run_sweep_holdout_eviction_benchmark import SWEEP_HOLDOUT_FEATURES_CSV_PATH, sweep_holdout_trace_ids
 from train_predictor import clean_feature_values
 
 # kv-cache-simulator.py's filename has a hyphen, so it isn't a valid Python
@@ -58,22 +81,20 @@ MODEL_PATH = "model.joblib"
 # differed" (still readable, not an overwhelming wall of output).
 MAX_COMPARISONS_SHOWN = 8
 
-# 3% of this run's distinct items: inside the 1-5% band the README's
-# calibration table verifies a real, consistent hybrid-over-lru margin at
-# (+2.6pp / +2.1pp on the two independently tested datasets, specifically
-# at 3%) -- picked over 1-2% so a single small demo trace still produces
-# enough real eviction events for the comparison section to have content.
+# 3% of the COMBINED (background + live task) sequence's distinct items:
+# inside the 1-5% band the README's calibration table verifies a real,
+# consistent hybrid-over-lru margin (+2.6pp / +2.1pp on the two
+# independently tested datasets, specifically at 3%). Meaningful here
+# because, unlike a bare fresh trace, the combined sequence is now at the
+# same hundreds-to-thousands-of-events scale that calibration was measured
+# against -- see the module docstring.
 DEMO_CACHE_FRACTION = 0.03
 
-# the 1-5% calibration was measured against combined sequences of 700-1700+
-# distinct items (run_eviction_benchmark.py concatenates dozens of held-out
-# traces); a single fresh demo trace has maybe 15-40. applying 3% literally
-# there rounds to cache_size=1, which is degenerate -- with only one slot,
-# every policy is forced to evict the sole cached item every time, so there
-# is never a real CHOICE among multiple candidates for them to disagree
-# about. floored so the demo can show an actual eviction decision, not just
-# a trivially forced one; the demo prints both the fraction and the floored
-# size so this is visible, not hidden.
+# safety-net floor in case the held-out background set ever shrinks well
+# below its current ~1700 events -- shouldn't trigger in practice at that
+# scale, but keeps cache_size from ever degenerating to 1 (which would
+# force every policy to evict the sole cached item every time, leaving no
+# real choice for them to disagree about).
 MIN_DEMO_CACHE_SIZE = 3
 
 
@@ -113,8 +134,8 @@ def _describe_fate(events: list, step: int, item_id: str) -> str:
     return "never reused again"
 
 
-def _diverged_steps(lru_by_step: dict, other_by_step: dict) -> tuple:
-    shared_steps = sorted(set(lru_by_step) & set(other_by_step))
+def _diverged_steps(lru_by_step: dict, other_by_step: dict, min_step: int = 0) -> tuple:
+    shared_steps = sorted(s for s in set(lru_by_step) & set(other_by_step) if s >= min_step)
     diverged = [s for s in shared_steps if lru_by_step[s] != other_by_step[s]["evicted"]]
     return shared_steps, diverged
 
@@ -143,7 +164,9 @@ def _print_one_comparison(events: list, label: str, lru_by_step: dict, other_by_
         print(f"...and {remaining} more disagreement(s) not shown.\n")
 
 
-def _print_comparisons(events: list, lru_decisions: list, hybrid_decisions: list, predictor_decisions: list) -> None:
+def _print_comparisons(
+    events: list, lru_decisions: list, hybrid_decisions: list, predictor_decisions: list, live_region_start: int
+) -> None:
     lru_by_step = {d["step"]: d["evicted"] for d in lru_decisions}
     hybrid_by_step = {
         d["step"]: {
@@ -154,40 +177,38 @@ def _print_comparisons(events: list, lru_decisions: list, hybrid_decisions: list
         for d in hybrid_decisions
     }
 
-    shared_steps, diverged = _diverged_steps(lru_by_step, hybrid_by_step)
+    # restricted to live_region_start onward: the fresh task's own steps,
+    # evicted after the background traffic has already warmed up the
+    # pressure signal -- see module docstring for why the background is
+    # there at all. Excludes the background traffic's own steps so the
+    # printed disagreements are about the task that was just run live.
+    shared_steps, diverged = _diverged_steps(lru_by_step, hybrid_by_step, min_step=live_region_start)
     print(
-        f"Eviction steps where both LRU and Hybrid evicted something: {len(shared_steps)} "
-        f"({len(diverged)} of those disagreed on which item)\n"
+        f"Eviction steps (within your task's own run) where both LRU and Hybrid evicted something: "
+        f"{len(shared_steps)} ({len(diverged)} of those disagreed on which item)\n"
     )
 
     if diverged:
         _print_one_comparison(events, "Hybrid", lru_by_step, hybrid_by_step, diverged)
         return
 
-    # Hybrid only overrides LRU when its live working-set pressure signal
-    # (see run_hybrid's docstring) dips low enough -- that signal was
-    # calibrated against combined sequences of hundreds-to-thousands of
-    # events, and structurally can't reach a triggering value within one
-    # short single-task demo trace (its window only grows to
-    # working_set_fraction * position, so a ~50-touch trace never gives it
-    # enough history). Hybrid degenerating to exact LRU parity here is
-    # therefore an honest, expected outcome, not a bug -- but it leaves
-    # nothing to show, so fall back to showing where the underlying raw
-    # predictor (the signal Hybrid gates behind that pressure check) would
-    # have differed from LRU, so the demo still has real content to explain.
+    # Falls back to showing the raw predictor's own disagreements (still
+    # restricted to the live region) if Hybrid genuinely stayed at parity
+    # with LRU for every eviction in this particular run -- possible if,
+    # e.g., the task was too short to produce any evictions in its own
+    # region at all, or the predictor and LRU happened to agree throughout.
     print(
-        "(Hybrid never overrode LRU on this run -- its pressure signal needs more trace history than a single\n"
-        " short task provides to trigger predictor mode; see run_hybrid's docstring in kv-cache-simulator.py.\n"
-        " Showing where the underlying predictor, which Hybrid gates behind that safety check, would have\n"
-        " differed from LRU instead:)\n"
+        "(Hybrid didn't override LRU on any eviction within your task's own run this time.\n"
+        " Showing where the underlying predictor, which Hybrid gates behind a live pressure\n"
+        " check, would have differed from LRU instead:)\n"
     )
     predictor_by_step = {
         d["step"]: {"evicted": d["evicted"], "predicted_score": d["predicted_score"], "note": None}
         for d in predictor_decisions
     }
-    _, predictor_diverged = _diverged_steps(lru_by_step, predictor_by_step)
+    _, predictor_diverged = _diverged_steps(lru_by_step, predictor_by_step, min_step=live_region_start)
     if not predictor_diverged:
-        print("(No disagreements from the raw predictor either on this run.)\n")
+        print("(No disagreements from the raw predictor either, within your task's own run.)\n")
         return
     _print_one_comparison(events, "Predictor", lru_by_step, predictor_by_step, predictor_diverged)
 
@@ -202,9 +223,10 @@ def run_demo(task: str) -> None:
     # model having an off moment, and should read as one.
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(
-            f"{MODEL_PATH} not found. Run `python3 train_predictor.py` first "
-            "(uses the features.csv already in the repo, takes under a minute) "
-            "to generate it, then re-run demo.py."
+            f"{MODEL_PATH} not found. Run `python3 train_predictor.py --extra-input features_sweep.csv` "
+            "first (uses feature CSVs already in the repo, takes under a minute) to generate it, "
+            "then re-run demo.py. The --extra-input flag matters: without it, the model won't have "
+            "learned the sweep-heavy reuse pattern the predictor/hybrid need to show a real advantage."
         )
 
     trace_path = _run_trace(task)
@@ -217,13 +239,30 @@ def run_demo(task: str) -> None:
     model = model_bundle["model"]
     feature_names = model_bundle["feature_names"]
 
-    sim_touches = _build_touches(rows, feature_names)
+    live_touches = _build_touches(rows, feature_names)
+
+    # background traffic: the same sweep-heavy held-out set (never seen
+    # during training or calibration) README.md's calibration table is
+    # measured against -- see module docstring for why the fresh trace
+    # alone isn't enough, and why this specific dataset (not the general
+    # held-out split) is the one that matters here.
+    print("Loading held-out sweep-heavy background traffic (same dataset README.md's calibration table verifies against)...")
+    background_trace_ids = sweep_holdout_trace_ids()
+    background_touches = build_combined_touches(feature_names, SWEEP_HOLDOUT_FEATURES_CSV_PATH, background_trace_ids)
+    live_region_start = len(background_touches)
+    sim_touches = background_touches + live_touches
+
     events = [t["item_id"] for t in sim_touches]
     n_distinct = len(set(events))
     raw_cache_size = max(1, round(DEMO_CACHE_FRACTION * n_distinct))
     cache_size = max(MIN_DEMO_CACHE_SIZE, raw_cache_size)
     floor_note = f" (floored from {raw_cache_size} -- see MIN_DEMO_CACHE_SIZE)" if cache_size != raw_cache_size else ""
 
+    print(
+        f"Combined sequence: {len(background_touches)} background events "
+        f"({len(background_trace_ids)} held-out traces) + {len(live_touches)} events from your task just now "
+        f"= {len(events)} total, {n_distinct} distinct items\n"
+    )
     print(f"Simulating eviction at cache_size={cache_size}{floor_note} ({DEMO_CACHE_FRACTION:.0%} of {n_distinct} distinct items)\n")
 
     lru_hit_rate, lru_decisions = run_lru(events, cache_size, record_decisions=True)
@@ -238,19 +277,19 @@ def run_demo(task: str) -> None:
     print(f"{'LRU':<12}{lru_hit_rate:>9.1%}")
     print(f"{'Predictor':<12}{predictor_hit_rate:>9.1%}")
     print(f"{'Hybrid':<12}{hybrid_hit_rate:>9.1%}")
-    print()
+    print("(hit rates are over the whole combined sequence, matching how README.md's table was measured)\n")
 
-    print("=== Where LRU and Hybrid disagreed ===\n")
-    _print_comparisons(events, lru_decisions, hybrid_decisions, predictor_decisions)
+    print("=== Where LRU and Hybrid disagreed on your task's own eviction decisions ===\n")
+    _print_comparisons(events, lru_decisions, hybrid_decisions, predictor_decisions, live_region_start)
 
     diff_pp = (hybrid_hit_rate - lru_hit_rate) * 100
     print("=== This one demo run ===")
     print(f"LRU hit rate:    {lru_hit_rate:.1%}")
     print(f"Hybrid hit rate: {hybrid_hit_rate:.1%}  ({diff_pp:+.1f}pp vs LRU)")
     print(
-        "\nThis is a single fresh run on a small trace -- illustrative, not a "
-        "statistically meaningful result. See README.md for the full evaluation "
-        "across 150+ real traces and multiple held-out datasets."
+        "\nThis is one fresh run of the pipeline against a fixed held-out background -- illustrative of the "
+        "mechanism, not a re-run of the full statistical evaluation. See README.md for that evaluation across "
+        "150+ real traces and multiple independent held-out datasets."
     )
 
 
