@@ -18,7 +18,7 @@ ___
 
 A system that predicts, for each item touched during an LLM agent's execution trace, whether that item will be reused later and uses that prediction to make smarter KV-cache eviction decisions than plain LRU.
 
-Given the finding that LRU works near-optimally with large cache sizes, the model was built into a hybdird system dynamically switching between the agentic behaviour-based predictor and LRU.
+Given the finding that LRU works near-optimally with large cache sizes, the model was built into a hybrid system dynamically switching between the agentic behaviour-based predictor and LRU.
 ___
 **The solution**
 
